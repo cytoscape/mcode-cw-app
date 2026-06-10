@@ -51,11 +51,19 @@ export default (env) => ({
         './AppConfig': './src/index.ts',
       },
       shared: {
-        react: { singleton: true, requiredVersion: deps.react },
-        'react-dom': { singleton: true, requiredVersion: deps['react-dom'] },
+        // Host-owned singletons: `import: false` means this remote never
+        // bundles its own fallback copy — it consumes cyweb's instance only.
+        // Keeps react/react-dom/@mui out of the distributed files entirely.
+        react: { singleton: true, requiredVersion: deps.react, import: false },
+        'react-dom': {
+          singleton: true,
+          requiredVersion: deps['react-dom'],
+          import: false,
+        },
         '@mui/material': {
           singleton: true,
           requiredVersion: deps['@mui/material'],
+          import: false,
         },
       },
     }),
