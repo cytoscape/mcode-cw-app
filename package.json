@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@mui/material": "^5.18.0",
+    "@types/cytoscape": "^3.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ts-loader": "^9.5.2",
@@ -24,7 +25,8 @@
     "@cytoscape-web/api-types": "^1.0.0-beta.2",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^5.18.0"
+    "@mui/icons-material": "^5.18.0",
+    "cytoscape": "^3.34.0"
   },
   "peerDependencies": {
     "react": "^18.3.1",
