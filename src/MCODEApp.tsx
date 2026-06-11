@@ -1,7 +1,5 @@
 /**
- * TemplateApp — Cytoscape Web plugin with panel, menu action, and context menu.
- *
- * Copy this file and update:
+ * Update:
  *   1. `id`          → must match the Module Federation `name` in webpack.config.js
  *   2. `name`        → human-readable name shown in the host's App Settings
  *   3. `description` → one-line summary
@@ -12,25 +10,20 @@
  * Resources (panels and menu items) are registered declaratively — the host
  * renders them automatically. Context menus need `apis` access, so they are
  * registered in mount() instead.
- *
- * See the hello-world app for examples of all 10 domain APIs.
- * See guides/ for the full App Developer Guide.
  */
+
 import { lazy } from 'react'
 
 import { AppContext, CyAppWithLifecycle } from 'cyweb/ApiTypes'
 import packageJson from '../package.json'
 
-import { registerSelectNeighbors } from './contextMenus'
 
 const { version } = packageJson
 
 export const MCODEApp: CyAppWithLifecycle = {
   id: 'mcode', // must match the Module Federation `name` in webpack.config.js
   name: 'MCODE',
-  description:
-    'Boilerplate app with a panel, a menu action, a context menu item, ' +
-    'and the recommended Cytoscape Web plugin shape.',
+  description: 'MCODE finds clusters (highly interconnected regions) in a network',
   version,
   apiVersion: '1.0',
 
@@ -44,13 +37,6 @@ export const MCODEApp: CyAppWithLifecycle = {
       title: 'MCODE', // Tab title shown in the right panel.
       component: lazy(() => import('./components/MCODEPanel')),
     },
-    {
-      slot: 'apps-menu',
-      id: 'MCODEMenuItem',
-      title: 'MCODE', // Label shown in the Apps dropdown.
-      component: lazy(() => import('./components/MCODEMenuItem')),
-      closeOnAction: true, // Auto-close the dropdown after action.
-    },
   ],
 
   // ── Lifecycle hooks ────────────────────────────────────────────────────
@@ -61,7 +47,7 @@ export const MCODEApp: CyAppWithLifecycle = {
     // Context menu items are registered here because their handlers need
     // access to context.apis. The host auto-cleans all items when the app
     // is disabled — no explicit removal in unmount() needed.
-    registerSelectNeighbors(context)
+    // registerSelectNeighbors(context)
 
     // TODO: Add more context menu registrations or event listeners here.
     // See src/contextMenus.ts for the pattern.
