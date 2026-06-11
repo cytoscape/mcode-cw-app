@@ -17,10 +17,24 @@
 export type AdjacencyMap = Map<string, string[]>
 
 /**
+ * The set of nodes MCODE runs over: the whole network, or only the
+ * currently selected nodes. Mirrors Java `MCODEAnalysisScope`.
+ */
+export type MCODEAnalysisScope = 'NETWORK' | 'SELECTION'
+
+/** Human-readable labels for each scope (matches the Java enum's toString). */
+export const MCODE_ANALYSIS_SCOPE_LABELS: Record<MCODEAnalysisScope, string> = {
+  NETWORK: 'In Whole Network',
+  SELECTION: 'From Selection',
+}
+
+/**
  * Tunable parameters controlling scoring, cluster finding and
  * post-processing. Defaults mirror the Cytoscape MCODE app defaults.
  */
 export interface MCODEParameters {
+  /** Which nodes to analyze: the whole network or the current selection. */
+  scope: MCODEAnalysisScope
   /** Count self-loops when computing degree and density. */
   includeLoops: boolean
   /** Minimum neighbor count for a node to receive a non-zero score. */
@@ -71,8 +85,16 @@ export interface MCODECluster {
   rank: number
 }
 
+export interface MCODEResult {
+  name: string
+  networkId: string
+  parameters: MCODEParameters
+  clusters: MCODECluster[]
+}
+
 /** Default MCODE parameters (match the Cytoscape MCODE app). */
 export const DEFAULT_MCODE_PARAMETERS: MCODEParameters = {
+  scope: 'NETWORK',
   includeLoops: false,
   degreeCutoff: 2,
   kCore: 2,
