@@ -151,6 +151,7 @@ const MCODEPanel = (): JSX.Element => {
   const [selectedCluster, setSelectedCluster] = useState<MCODECluster | null>(null)
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
 
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
@@ -173,7 +174,15 @@ const MCODEPanel = (): JSX.Element => {
     })
   })
 
+  // Open the confirmation dialog instead of discarding right away.
   const handleDiscardResultClick = (): void => {
+    if (!selectedResult) return
+    setConfirmDiscardOpen(true)
+  }
+
+  // Actually remove the selected result, after the user confirms.
+  const handleConfirmDiscard = (): void => {
+    setConfirmDiscardOpen(false)
     if (!selectedResult) return
     setSelectedResult((prev) => {
       const index = results.indexOf(prev!)
@@ -433,22 +442,35 @@ const MCODEPanel = (): JSX.Element => {
         onSubmit={handleSubmitAnalysis}
       />
     )}
-    <Backdrop
-      open={analyzing}
-      sx={{ zIndex: (theme) => theme.zIndex.modal + 1 }}
-    >
-      <Dialog open={analyzing} sx={{ zIndex: (theme) => theme.zIndex.modal + 1, }}>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-          <CircularProgress color="inherit" />
-          <Typography>Analyzing network…</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button variant="outlined" color="error" onClick={cancelMcode}>
-            Cancel
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Backdrop>
+    <Dialog open={analyzing}>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+        <CircularProgress color="inherit" />
+        <Typography>Analyzing network…</Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button variant="outlined" color="error" onClick={cancelMcode}>
+          Cancel
+        </Button>
+      </DialogActions>
+    </Dialog>
+    <Dialog open={confirmDiscardOpen} onClose={() => setConfirmDiscardOpen(false)}>
+      <DialogTitle>Discard Result</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          {selectedResult
+            ? `Are you sure you want to discard the result "${selectedResult.name}"?`
+            : 'Are you sure you want to discard this result?'}
+        </DialogContentText>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setConfirmDiscardOpen(false)} variant="outlined">
+          Cancel
+        </Button>
+        <Button onClick={handleConfirmDiscard} variant="contained" color="error">
+          Confirm
+        </Button>
+      </DialogActions>
+    </Dialog>
     <Dialog open={noResultsOpen} onClose={() => setNoResultsOpen(false)}>
       <DialogTitle>No Results</DialogTitle>
       <DialogContent>
