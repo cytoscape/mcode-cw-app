@@ -1,7 +1,22 @@
 import AddIcon from '@mui/icons-material/Add'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { useEffect, useState } from 'react'
-import { Box, Button, Container, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, MenuItem, Paper, Select, Tooltip, Typography } from '@mui/material'
+import {
+  Backdrop,
+  Box,
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  IconButton,
+  MenuItem,
+  Select,
+  Tooltip,
+  Typography
+} from '@mui/material'
 import cytoscape from 'cytoscape'
 
 import { useCyWebEvent } from 'cyweb/EventBus'
@@ -10,8 +25,8 @@ import { useSelectionApi } from 'cyweb/SelectionApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
 
-import { MCODEAlgorithm } from '../model/mcodeAlgorithm'
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
+import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
 import { NewAnalysisDialog } from './NewAnalysisDialog'
 
 
@@ -133,13 +148,16 @@ const MCODEPanel = (): JSX.Element => {
   })
   const [results, setResults] = useState<MCODEResult[]>([])
   const [selectedResult, setSelectedResult] = useState<MCODEResult | null>(null)
-  const [networkId, setNetworkId] = useState<string | null>(null)
   const [selectedCluster, setSelectedCluster] = useState<MCODECluster | null>(null)
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+
+  // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
+  const { run: runMcode, cancel: cancelMcode } = useMcodeWorker()
 
   useCyWebEvent('network:switched', ({ networkId: newId, previousId }) => {
-    console.log(`current network changed: ${previousId || '(none)'} → ${newId}`)
+    console.debug(`current network changed: ${previousId || '(none)'} → ${newId}`)
     setCurrentNetworkId(newId)
   })
   useCyWebEvent('network:deleted', ({ networkId }) => {
@@ -172,7 +190,7 @@ const MCODEPanel = (): JSX.Element => {
     setAnalysisDialogOpen(true)
   }
   
-  const handleSubmitAnalysis = (parameters: MCODEParameters): void => {
+  const handleSubmitAnalysis = async (parameters: MCODEParameters): Promise<void> => {
     if (!currentNetworkId) {
       return
     }
@@ -211,10 +229,25 @@ const MCODEPanel = (): JSX.Element => {
           : neighborIds,
       )
     }
-    console.log('Adjacency map:', adjacency)
+    console.debug('Adjacency map:', adjacency)
 
-    // 3. Run MCODE over the adjacency map.
-    const clusters = new MCODEAlgorithm(parameters).run(adjacency)
+    // 3. Run MCODE in a web worker so a large network doesn't freeze the UI.
+    //    A spinner is shown while `analyzing` is true.
+    let clusters: MCODECluster[]
+    setAnalyzing(true)
+    try {
+      clusters = await runMcode(adjacency, parameters)
+    } catch (err) {
+      // A user cancellation is expected; only warn on genuine failures.
+      if (err instanceof McodeCancelledError) {
+        console.debug('MCODE analysis cancelled')
+      } else {
+        console.warn('MCODE analysis failed:', err)
+      }
+      return
+    } finally {
+      setAnalyzing(false)
+    }
 
     // If nothing was found, don't add an empty result; just inform the user.
     if (clusters.length === 0) {
@@ -236,7 +269,7 @@ const MCODEPanel = (): JSX.Element => {
     }
     setResults((prev) => [...prev, newResult])
     setSelectedResult(newResult)
-    console.log(`MCODE found ${clusters.length} cluster(s)`, clusters)
+    console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
   }
 
   const handleClusterClick = (cluster: MCODECluster): void => {
@@ -285,6 +318,16 @@ const MCODEPanel = (): JSX.Element => {
               setSelectedCluster(null)
             }}
             displayEmpty
+            renderValue={(value: unknown) => {
+              if (!value) {
+                return (
+                  <Typography color={results.length > 0 ? 'text.secondary' : 'text.disabled'}>
+                    {results.length > 0 ? '-- Select Result --' : '-- No Results --'}
+                  </Typography>
+                );
+              }
+              return <>{value}</>;
+            }}
             sx={{
               flexGrow: 1,
               minWidth: 200,
@@ -314,7 +357,7 @@ const MCODEPanel = (): JSX.Element => {
             <span>
               <Button
                 variant="contained"
-                disabled={!currentNetworkId}
+                disabled={!currentNetworkId || analyzing}
                 onClick={handleNewAnalysisClick}
                 sx={{
                   minWidth: 24,
@@ -390,6 +433,22 @@ const MCODEPanel = (): JSX.Element => {
         onSubmit={handleSubmitAnalysis}
       />
     )}
+    <Backdrop
+      open={analyzing}
+      sx={{ zIndex: (theme) => theme.zIndex.modal + 1 }}
+    >
+      <Dialog open={analyzing} sx={{ zIndex: (theme) => theme.zIndex.modal + 1, }}>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <CircularProgress color="inherit" />
+          <Typography>Analyzing network…</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button variant="outlined" color="error" onClick={cancelMcode}>
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Backdrop>
     <Dialog open={noResultsOpen} onClose={() => setNoResultsOpen(false)}>
       <DialogTitle>No Results</DialogTitle>
       <DialogContent>

@@ -143,8 +143,8 @@ export const NewAnalysisDialog = ({
       fluff,
       fluffNodeDensityCutoff: Number(fluffNodeDensityCutoff),
     }
-    onSubmit(parameters)
     onClose()
+    onSubmit(parameters)
   }
 
   // Shared props for the small, right-aligned numeric text fields.
