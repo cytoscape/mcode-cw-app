@@ -142,6 +142,18 @@ const MCODEPanel = (): JSX.Element => {
     console.log(`current network changed: ${previousId || '(none)'} → ${newId}`)
     setCurrentNetworkId(newId)
   })
+  useCyWebEvent('network:deleted', ({ networkId }) => {
+    console.debug(`Network deleted: ${networkId}`)
+    // Delete all MCODE results that have the same networkId, and clear the selected result if it's among them.
+    setResults((prev) => {
+      const filtered = prev.filter((r) => r.networkId !== networkId)
+      if (selectedResult && selectedResult.networkId === networkId) {
+        setSelectedResult(null)
+        setSelectedCluster(null)
+      }
+      return filtered
+    })
+  })
 
   const handleDiscardResultClick = (): void => {
     if (!selectedResult) return
