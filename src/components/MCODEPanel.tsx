@@ -1,5 +1,10 @@
 import AddIcon from '@mui/icons-material/Add'
+import CheckIcon from '@mui/icons-material/Check'
 import DeleteIcon from '@mui/icons-material/Delete'
+import FileDownloadIcon from '@mui/icons-material/FileDownload'
+import InfoIcon from '@mui/icons-material/Info'
+import MenuIcon from '@mui/icons-material/Menu'
+import PaletteIcon from '@mui/icons-material/Palette'
 import { useEffect, useState } from 'react'
 import {
   Backdrop,
@@ -11,7 +16,9 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
   IconButton,
+  Menu,
   MenuItem,
   Select,
   Tooltip,
@@ -29,6 +36,200 @@ import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
 import { NewAnalysisDialog } from './NewAnalysisDialog'
 
+
+const OptionsMenu = ({
+  currentNetworkId,
+  results,
+  selectedResult,
+  selectedCluster,
+  onShowAnalysisParameters,
+  onDiscardSelectedResult,
+  onDiscardAllResults,
+}: {
+  currentNetworkId: string | null
+  results: MCODEResult[]
+  selectedResult: MCODEResult | null
+  selectedCluster: MCODECluster | null
+  onShowAnalysisParameters: (show: boolean) => void
+  onDiscardSelectedResult: () => void
+  onDiscardAllResults: () => void
+}): JSX.Element => {
+  const workspaceApi = useWorkspaceApi()
+
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+  const [showParametersResult, setShowParametersResult] = useState(false)
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
+  const [confirmMessage, setConfirmMessage] = useState('')
+  const [confirmAction, setConfirmAction] = useState<() => void>(() => {})
+
+  const open = Boolean(anchorEl);
+
+  const handleOptionsClick = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  }
+  const handleOptionsClose = () => {
+    setAnchorEl(null)
+  }
+
+  const handleViewSourceNetwork = () => {
+    handleOptionsClose()
+    if (!selectedResult) return
+    // Ask Cytoscape Web to make the source network the active/shown one.
+    const res = workspaceApi.switchCurrentNetwork(selectedResult.networkId)
+    console.debug('Switching to source network:', selectedResult.networkId, res)
+    if (!res.success) {
+      console.warn('Failed to switch to source network:', res.error.message)
+    }
+  }
+  const handleApplyMcodeStyle = () => {
+    handleOptionsClose()
+    // TODO
+  }
+  const handleCreateClusterNetwork = () => {
+    handleOptionsClose()
+    // TODO
+  }
+  const handleExportResult = () => {
+    handleOptionsClose()
+    // TODO
+  }
+  const handleShowAnalysisParameters = () => {
+    handleOptionsClose()
+    setShowParametersResult((prev) => !prev)
+    onShowAnalysisParameters(!showParametersResult)
+  }
+  const handleDiscardSelectedResult = () => {
+    handleOptionsClose()
+    if (!selectedResult) return
+    setConfirmMessage(`Are you sure you want to discard the result "${selectedResult.name}"?`)
+    setConfirmAction(() => onDiscardSelectedResult)
+    setConfirmDialogOpen(true)
+  }
+  const handleDiscardAllResults = () => {
+    handleOptionsClose()
+    setConfirmMessage('Are you sure you want to discard all results?')
+    setConfirmAction(() => onDiscardAllResults)
+    setConfirmDialogOpen(true)
+  }
+
+  // Actually remove the selected result, after the user confirms.
+  const handleConfirmDiscard = (): void => {
+    setConfirmDialogOpen(false)
+    confirmAction?.()
+  }
+
+  return (
+    <>
+      <Tooltip title="Options...">
+        <span>
+          <IconButton
+            onClick={handleOptionsClick}
+          >
+            <MenuIcon />
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Menu
+        open={open}
+        anchorEl={anchorEl}
+        onClose={handleOptionsClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+      >
+        <MenuItem
+          disabled={!selectedResult || currentNetworkId === selectedResult.networkId}
+          onClick={handleViewSourceNetwork}
+        >
+          <Typography component="span" sx={{ pl: 3 }}>
+            View Source Network
+          </Typography>
+        </MenuItem>
+        <MenuItem
+          disabled={!selectedResult}
+          onClick={handleApplyMcodeStyle}
+        >
+          <PaletteIcon sx={{ ml: 3 }} />
+          <Typography component="span" sx={{ pl: 0.5 }}>
+            Apply MCODE Style
+          </Typography>
+        </MenuItem>
+        <Divider sx={{ my: 0.5 }} />
+        <MenuItem
+          disabled={!selectedCluster}
+          onClick={handleCreateClusterNetwork}
+        >
+          <Typography component="span" sx={{ pl: 3 }}>
+            Create Cluster Network
+          </Typography>
+        </MenuItem>
+        <MenuItem
+          disabled={!selectedResult}
+          onClick={handleExportResult}
+        >
+          <FileDownloadIcon sx={{ ml: 3 }} />
+          <Typography component="span" sx={{ pl: 0.5 }}>
+            Export Result
+          </Typography>
+        </MenuItem>
+        <Divider sx={{ my: 0.5 }} />
+        <MenuItem
+          disabled={!selectedResult}
+          onClick={handleShowAnalysisParameters}
+        >
+        {showParametersResult ? <CheckIcon fontSize="small" /> : <Box sx={{ width: 24 }} />}
+          <InfoIcon />
+          <Typography component="span" sx={{ pl: 0.5 }}>
+            Show Analysis Parameters
+          </Typography>
+        </MenuItem>
+        <Divider sx={{ my: 0.5 }} />
+        <MenuItem
+          disabled={!selectedResult}
+          onClick={handleDiscardSelectedResult}
+        >
+          <DeleteIcon sx={{ ml: 3 }} />
+          <Typography component="span" sx={{ pl: 0.5 }}>
+            Discard Selected Result
+          </Typography>
+        </MenuItem>
+        <MenuItem
+          disabled={!results || results.length === 0}
+          onClick={handleDiscardAllResults}
+        >
+          <DeleteIcon sx={{ ml: 3 }} />
+          <Typography component="span" sx={{ pl: 0.5 }}>
+            Discard All Results
+          </Typography>
+        </MenuItem>
+      </Menu>
+      <Dialog
+        open={confirmDialogOpen}
+        onClose={() => setConfirmDialogOpen(false)}
+      >
+        <DialogTitle>Discard Result</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {confirmMessage}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDialogOpen(false)} variant="outlined">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirmDiscard} variant="contained" color="error">
+            Confirm
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  )
+}
 
 const ClusterThumbnail = ({
   networkId,
@@ -148,10 +349,10 @@ const MCODEPanel = (): JSX.Element => {
   })
   const [results, setResults] = useState<MCODEResult[]>([])
   const [selectedResult, setSelectedResult] = useState<MCODEResult | null>(null)
+  const [showParametersResult, setShowParametersResult] = useState(false)
   const [selectedCluster, setSelectedCluster] = useState<MCODECluster | null>(null)
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
-  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
 
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
@@ -173,27 +374,6 @@ const MCODEPanel = (): JSX.Element => {
       return filtered
     })
   })
-
-  // Open the confirmation dialog instead of discarding right away.
-  const handleDiscardResultClick = (): void => {
-    if (!selectedResult) return
-    setConfirmDiscardOpen(true)
-  }
-
-  // Actually remove the selected result, after the user confirms.
-  const handleConfirmDiscard = (): void => {
-    setConfirmDiscardOpen(false)
-    if (!selectedResult) return
-    setSelectedResult((prev) => {
-      const index = results.indexOf(prev!)
-      if (index > 0) {
-        return results[index - 1]
-      }
-      return results.length > 1 ? results[1] : null
-    })
-    setResults((prev) => prev.filter((r) => r !== selectedResult))
-    setSelectedCluster(null)
-  }
 
   const handleNewAnalysisClick = (): void => {
     setAnalysisDialogOpen(true)
@@ -299,6 +479,28 @@ const MCODEPanel = (): JSX.Element => {
     }
   }
 
+  const handleShowAnalysisParameters = (show: boolean): void => {
+    setShowParametersResult(show)
+  }
+  const handleDiscardSelectedResult = (): void => {
+    if (selectedResult) {
+      setSelectedResult((prev) => {
+        const index = results.indexOf(prev!)
+        if (index > 0) {
+          return results[index - 1]
+        }
+        return results.length > 1 ? results[1] : null
+      })
+      setResults((prev) => prev.filter((r) => r !== selectedResult))
+      setSelectedCluster(null)
+    }
+  }
+  const handleDiscardAllResults = (): void => {
+    setSelectedResult(null)
+    setResults([])
+    setSelectedCluster(null)
+  }
+
   return (
     <>
       <Box
@@ -349,19 +551,6 @@ const MCODEPanel = (): JSX.Element => {
               </MenuItem>
             ))}
           </Select>
-          <Tooltip title="Discard selected result">
-            <span>
-              <IconButton
-                disabled={!selectedResult}
-                onClick={handleDiscardResultClick}
-                sx={{
-                  color: 'text.primary',
-                }}
-              >
-                <DeleteIcon />
-              </IconButton>
-            </span>
-          </Tooltip>
           <Tooltip title="New analysis...">
             <span>
               <Button
@@ -377,7 +566,53 @@ const MCODEPanel = (): JSX.Element => {
               </Button>
             </span>
           </Tooltip>
+          <OptionsMenu
+            currentNetworkId={currentNetworkId}
+            results={results}
+            selectedResult={selectedResult}
+            selectedCluster={selectedCluster}
+            onShowAnalysisParameters={handleShowAnalysisParameters}
+            onDiscardSelectedResult={handleDiscardSelectedResult}
+            onDiscardAllResults={handleDiscardAllResults}
+          />
         </Box>
+      {showParametersResult && selectedResult && (
+        <Box sx={{
+          p: 2,
+          backgroundColor: 'background.default',
+          borderTop: (theme) => `2px solid ${theme.palette.background.paper}`,
+        }}>
+          <Typography variant="body2" color="text.secondary">
+            Scope: {selectedResult.parameters.scope === 'NETWORK' ? 'Whole Network' : 'Selected Nodes'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Include Loops: {selectedResult.parameters.includeLoops ? 'Yes' : 'No'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Degree Cutoff: {selectedResult.parameters.degreeCutoff}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Haircut: {selectedResult.parameters.haircut ? 'Yes' : 'No'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Fluff: {selectedResult.parameters.fluff ? 'Yes' : 'No'}
+          </Typography>
+          {selectedResult.parameters.fluff && (
+            <Typography variant="body2" color="text.secondary">
+              Fluff Node Density Cutoff: {selectedResult.parameters.fluffNodeDensityCutoff}
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary">
+            Node Score Cutoff: {selectedResult.parameters.nodeScoreCutoff}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            K-Core: {selectedResult.parameters.kCore}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Max Depth: {selectedResult.parameters.maxDepthFromStart}
+          </Typography>
+        </Box>
+      )}
         <Box
           sx={{
             flexGrow: 1,
@@ -450,24 +685,6 @@ const MCODEPanel = (): JSX.Element => {
       <DialogActions>
         <Button variant="outlined" color="error" onClick={cancelMcode}>
           Cancel
-        </Button>
-      </DialogActions>
-    </Dialog>
-    <Dialog open={confirmDiscardOpen} onClose={() => setConfirmDiscardOpen(false)}>
-      <DialogTitle>Discard Result</DialogTitle>
-      <DialogContent>
-        <DialogContentText>
-          {selectedResult
-            ? `Are you sure you want to discard the result "${selectedResult.name}"?`
-            : 'Are you sure you want to discard this result?'}
-        </DialogContentText>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setConfirmDiscardOpen(false)} variant="outlined">
-          Cancel
-        </Button>
-        <Button onClick={handleConfirmDiscard} variant="contained" color="error">
-          Confirm
         </Button>
       </DialogActions>
     </Dialog>
