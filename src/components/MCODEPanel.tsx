@@ -263,7 +263,7 @@ const ClusterThumbnail = ({
     }
 
     const elements: cytoscape.ElementDefinition[] = [
-      ...cluster.nodes.map((id) => ({ data: { id } })),
+      ...cluster.nodes.map((id) => ({ data: { id, 'Node Status': cluster.seedId === id ? 'Seed' : 'Clustered' } })),
       ...[...edgeKeys].map((key) => {
         const [source, target] = key.split('|')
         return { data: { id: key, source, target } }
@@ -286,11 +286,22 @@ const ClusterThumbnail = ({
       style: [
         {
           selector: 'node',
-          style: { 'background-color': '#2185d0', width: 14, height: 14 },
+          style: {
+            'background-color': 'rgb(178, 24, 43)',
+            'width': 40,
+            'height': 40,
+            'shape': (n) => n.data('Node Status') === 'Seed' ? 'rectangle' : 'ellipse',
+          },
         },
         {
           selector: 'edge',
-          style: { 'line-color': '#9e9e9e', width: 2 },
+          style: {
+            'line-color': 'rgb(103, 169, 207)',
+            'width': 5,
+            'curve-style': 'bezier',
+            'target-arrow-color': 'rgb(33, 102, 172)',
+            'target-arrow-shape': 'triangle'
+          },
         },
       ],
       // Discrete layout: positions are applied synchronously on run().
