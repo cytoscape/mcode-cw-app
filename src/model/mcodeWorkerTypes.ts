@@ -14,7 +14,11 @@ export interface MCODEWorkerRequest {
   parameters: MCODEParameters
 }
 
-/** Worker → main thread: the ranked clusters on success, or an error message. */
+/**
+ * Worker → main thread: on success, the ranked clusters plus every analyzed
+ * node's score (keyed by node id), used to populate the result's node columns.
+ * On failure, an error message.
+ */
 export type MCODEWorkerResponse =
-  | { type: 'success'; clusters: MCODECluster[] }
+  | { type: 'success'; clusters: MCODECluster[]; scores: Record<string, number> }
   | { type: 'error'; message: string }

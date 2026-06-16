@@ -20,8 +20,14 @@ export class McodeCancelledError extends Error {
   }
 }
 
+/** Result of a successful analysis: ranked clusters plus per-node scores. */
+export interface MCODEAnalysisResult {
+  clusters: MCODECluster[]
+  scores: Record<string, number>
+}
+
 type Pending = {
-  resolve: (clusters: MCODECluster[]) => void
+  resolve: (result: MCODEAnalysisResult) => void
   reject: (error: Error) => void
 }
 
@@ -81,7 +87,7 @@ function createMcodeWorker(): Worker {
 }
 
 export interface McodeWorkerController {
-  run: (adjacency: AdjacencyMap, parameters: MCODEParameters) => Promise<MCODECluster[]>
+  run: (adjacency: AdjacencyMap, parameters: MCODEParameters) => Promise<MCODEAnalysisResult>
   cancel: () => void
 }
 
@@ -96,7 +102,8 @@ export function useMcodeWorker(): McodeWorkerController {
     if (!pending) return
 
     if (response instanceof Error) pending.reject(response)
-    else if (response.type === 'success') pending.resolve(response.clusters)
+    else if (response.type === 'success')
+      pending.resolve({ clusters: response.clusters, scores: response.scores })
     else pending.reject(new Error(response.message))
   })
 
@@ -122,8 +129,8 @@ export function useMcodeWorker(): McodeWorkerController {
   }, [])
 
   const run = useCallback(
-    (adjacency: AdjacencyMap, parameters: MCODEParameters): Promise<MCODECluster[]> =>
-      new Promise<MCODECluster[]>((resolve, reject) => {
+    (adjacency: AdjacencyMap, parameters: MCODEParameters): Promise<MCODEAnalysisResult> =>
+      new Promise<MCODEAnalysisResult>((resolve, reject) => {
         if (pendingRef.current) {
           reject(new Error('An MCODE analysis is already running'))
           return

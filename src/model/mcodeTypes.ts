@@ -88,6 +88,7 @@ export interface MCODECluster {
 }
 
 export interface MCODEResult {
+  id: number
   name: string
   networkId: string
   parameters: MCODEParameters

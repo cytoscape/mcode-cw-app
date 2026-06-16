@@ -5,9 +5,8 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import InfoIcon from '@mui/icons-material/Info'
 import MenuIcon from '@mui/icons-material/Menu'
 import PaletteIcon from '@mui/icons-material/Palette'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  Backdrop,
   Box,
   Button,
   CircularProgress,
@@ -29,9 +28,11 @@ import cytoscape from 'cytoscape'
 import { useCyWebEvent } from 'cyweb/EventBus'
 import { useElementApi } from 'cyweb/ElementApi'
 import { useSelectionApi } from 'cyweb/SelectionApi'
+import { useTableApi } from 'cyweb/TableApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
 
+import { buildMcodeNodeTableData, mcodeColumnNames } from '../model/mcodeExport'
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { useMcodeResultActions } from '../model/useMcodeResultActions'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
@@ -360,6 +361,7 @@ const MCODEPanel = (): JSX.Element => {
   const workspaceApi = useWorkspaceApi()
   const elementApi = useElementApi()
   const selectionApi = useSelectionApi()
+  const tableApi = useTableApi()
 
   const [currentNetworkId, setCurrentNetworkId] = useState<string | null>(() => {
     const current = workspaceApi.getCurrentNetworkId()
@@ -372,6 +374,11 @@ const MCODEPanel = (): JSX.Element => {
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+
+  // Monotonically increasing result id.
+  // It never reuses an id, even after results are discarded,
+  // so a new result can't collide with a deleted one's leftover node columns.
+  const nextResultId = useRef(1)
 
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
   const { run: runMcode, cancel: cancelMcode } = useMcodeWorker()
@@ -441,9 +448,10 @@ const MCODEPanel = (): JSX.Element => {
     // 3. Run MCODE in a web worker so a large network doesn't freeze the UI.
     //    A spinner is shown while `analyzing` is true.
     let clusters: MCODECluster[]
+    let scores: Record<string, number>
     setAnalyzing(true)
     try {
-      clusters = await runMcode(adjacency, parameters)
+      ;({ clusters, scores } = await runMcode(adjacency, parameters))
     } catch (err) {
       // A user cancellation is expected; only warn on genuine failures.
       if (err instanceof McodeCancelledError) {
@@ -467,9 +475,11 @@ const MCODEPanel = (): JSX.Element => {
     //    last index once it is appended).
     const summary = workspaceApi.getNetworkSummary(currentNetworkId)
     const networkName = summary.success ? summary.data.name : currentNetworkId
-    const count = results.length + 1
+    const id = nextResultId.current
+    nextResultId.current += 1
     const newResult: MCODEResult = {
-      name: `${count} - ${networkName}`,
+      id,
+      name: `${id} - ${networkName}`,
       networkId: currentNetworkId,
       parameters,
       clusters,
@@ -477,6 +487,21 @@ const MCODEPanel = (): JSX.Element => {
     setResults((prev) => [...prev, newResult])
     setSelectedResult(newResult)
     console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
+
+    // 5. Add the MCODE result columns to the source network's node table:
+    //    "MCODE::Score (n)", "MCODE::Node Status (n)", "MCODE::Clusters (n)".
+    const { columns, rows } = buildMcodeNodeTableData(id, clusters, scores)
+    for (const col of columns) {
+      const created = tableApi.createColumn(currentNetworkId, 'node', col.name, col.type, col.defaultValue)
+      if (!created.success) {
+        console.warn(`Failed to create node column "${col.name}":`, created.error.message)
+      }
+    }
+    console.debug('Writing MCODE node column values...', rows)
+    const edited = tableApi.editRows(currentNetworkId, 'node', rows)
+    if (!edited.success) {
+      console.warn('Failed to write MCODE node column values:', edited.error.message)
+    }
   }
 
   const handleClusterClick = (cluster: MCODECluster): void => {
@@ -500,8 +525,21 @@ const MCODEPanel = (): JSX.Element => {
   const handleShowAnalysisParameters = (show: boolean): void => {
     setShowParametersResult(show)
   }
+
+  // Remove the result's MCODE node-table columns from its source network.
+  const removeResultColumns = (result: MCODEResult): void => {
+    for (const name of mcodeColumnNames(result.id)) {
+      console.debug(`Deleting column "${name}" from network ${result.networkId}...`)
+      const res = tableApi.deleteColumn(result.networkId, 'node', name)
+      if (!res.success) {
+        console.warn(`Failed to delete node column "${name}":`, res.error.message)
+      }
+    }
+  }
+
   const handleDiscardSelectedResult = (): void => {
     if (selectedResult) {
+      removeResultColumns(selectedResult)
       setSelectedResult((prev) => {
         const index = results.indexOf(prev!)
         if (index > 0) {
@@ -514,6 +552,7 @@ const MCODEPanel = (): JSX.Element => {
     }
   }
   const handleDiscardAllResults = (): void => {
+    results.forEach(removeResultColumns)
     setSelectedResult(null)
     setResults([])
     setSelectedCluster(null)

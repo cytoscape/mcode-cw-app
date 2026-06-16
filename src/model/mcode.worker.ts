@@ -23,8 +23,17 @@ ctx.onmessage = (event: MessageEvent<MCODEWorkerRequest>): void => {
   const { adjacency, parameters } = event.data
 
   try {
-    const clusters = new MCODEAlgorithm(parameters).run(adjacency)
-    ctx.postMessage({ type: 'success', clusters })
+    const alg = new MCODEAlgorithm(parameters)
+    const clusters = alg.run(adjacency)
+
+    // Capture every analyzed node's score so the main thread can populate the
+    // result's "MCODE::Score (n)" node column.
+    const scores: Record<string, number> = {}
+    for (const nodeId of adjacency.keys()) {
+      scores[nodeId] = alg.getNodeScore(nodeId)
+    }
+
+    ctx.postMessage({ type: 'success', clusters, scores })
   } catch (err) {
     ctx.postMessage({
       type: 'error',
