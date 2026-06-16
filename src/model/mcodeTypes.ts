@@ -83,6 +83,8 @@ export interface MCODECluster {
   score: number
   /** 1-based rank after sorting clusters by descending score. */
   rank: number
+  /** The node positions, after the cluster thumbnail is generated. */
+  nodePositions?: Record<string, { x: number; y: number }>
 }
 
 export interface MCODEResult {

@@ -28,9 +28,13 @@ import cytoscape from 'cytoscape'
 
 import { useCyWebEvent } from 'cyweb/EventBus'
 import { useElementApi } from 'cyweb/ElementApi'
+import { useExportApi } from 'cyweb/ExportApi'
+import { useNetworkApi } from 'cyweb/NetworkApi'
 import { useSelectionApi } from 'cyweb/SelectionApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
+
+import type { Cx2 } from '@cytoscape-web/api-types'
 
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
@@ -55,6 +59,8 @@ const OptionsMenu = ({
   onDiscardAllResults: () => void
 }): JSX.Element => {
   const workspaceApi = useWorkspaceApi()
+  const networkApi = useNetworkApi()
+  const exportApi = useExportApi()
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [showParametersResult, setShowParametersResult] = useState(false)
@@ -87,7 +93,65 @@ const OptionsMenu = ({
   }
   const handleCreateClusterNetwork = () => {
     handleOptionsClose()
-    // TODO
+    if (!selectedResult || !selectedCluster) return
+
+    const clusterNodes = new Set(selectedCluster.nodes)
+    const nodePositions = selectedCluster.nodePositions
+    const clusterName = `${selectedResult.name} (Cluster ${selectedCluster.rank})`
+
+    // Export the source network to CX2 and slice it down to the cluster, rather
+    // than building an edge list: CX2 carries the original node/edge table
+    // attributes (and visual styles), so the subnetwork preserves them.
+    const exported = exportApi.exportToCx2(selectedResult.networkId, { networkName: clusterName })
+    if (!exported.success) {
+      console.warn('Failed to export source network:', exported.error.message)
+      return
+    }
+
+    // Keep nodes that are in the cluster, and edges whose endpoints are both in
+    // the cluster. Node coordinates are replaced with the cluster's stored
+    // layout, so importing the CX2 does not run a layout algorithm.
+    let nodeCount = 0
+    let edgeCount = 0
+    const cxData: any[] = exported.data.map((aspect: Record<string, any>) => {
+      if (Array.isArray(aspect.nodes)) {
+        const nodes = aspect.nodes
+          .filter((n: any) => clusterNodes.has(String(n.id)))
+          .map((n: any) => {
+            const pos = nodePositions?.[String(n.id)]
+            return pos ? { ...n, x: pos.x, y: pos.y } : n
+          })
+        nodeCount = nodes.length
+        return { nodes }
+      }
+      if (Array.isArray(aspect.edges)) {
+        const edges = aspect.edges.filter(
+          (e: any) => clusterNodes.has(String(e.s)) && clusterNodes.has(String(e.t)),
+        )
+        edgeCount = edges.length
+        return { edges }
+      }
+      return aspect
+    })
+
+    // Keep the metaData element counts consistent with the sliced aspects.
+    for (const aspect of cxData) {
+      if (Array.isArray(aspect.metaData)) {
+        for (const meta of aspect.metaData as Array<{ name: string; elementCount?: number }>) {
+          if (meta.name === 'nodes' && meta.elementCount !== undefined) meta.elementCount = nodeCount
+          if (meta.name === 'edges' && meta.elementCount !== undefined) meta.elementCount = edgeCount
+        }
+      }
+    }
+
+    const created = networkApi.createNetworkFromCx2({
+      cxData: cxData as unknown as Cx2,
+      addToWorkspace: true,
+      navigate: true,
+    })
+    if (!created.success) {
+      console.warn('Failed to create cluster network:', created.error.message)
+    }
   }
   const handleExportResult = () => {
     handleOptionsClose()
@@ -146,7 +210,7 @@ const OptionsMenu = ({
           disabled={!selectedResult || currentNetworkId === selectedResult.networkId}
           onClick={handleViewSourceNetwork}
         >
-          <Typography component="span" sx={{ pl: 3 }}>
+          <Typography component="span" sx={{ pl: 3.25 }}>
             View Source Network
           </Typography>
         </MenuItem>
@@ -164,7 +228,7 @@ const OptionsMenu = ({
           disabled={!selectedCluster}
           onClick={handleCreateClusterNetwork}
         >
-          <Typography component="span" sx={{ pl: 3 }}>
+          <Typography component="span" sx={{ pl: 3.25 }}>
             Create Cluster Network
           </Typography>
         </MenuItem>
@@ -301,6 +365,14 @@ const ClusterThumbnail = ({
     // `full: true` exports the entire graph fit to the image, independent of
     // viewport zoom/pan. Returns a base64 PNG data URI usable as an <img> src.
     const png = cy.png({ full: true, bg: '#ffffff', scale: 2 })
+
+    // Save the node positions back to the cluster for later use (e.g. when creating a network from the cluster).
+    const nodePositions: Record<string, { x: number; y: number }> = {}
+    cy.nodes().forEach((n) => {
+      const pos = n.position()
+      nodePositions[n.id()] = { x: pos.x, y: pos.y }
+    })
+    cluster.nodePositions = nodePositions
 
     cy.destroy()
     document.body.removeChild(container)
