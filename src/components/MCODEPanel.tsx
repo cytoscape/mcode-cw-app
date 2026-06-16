@@ -28,15 +28,12 @@ import cytoscape from 'cytoscape'
 
 import { useCyWebEvent } from 'cyweb/EventBus'
 import { useElementApi } from 'cyweb/ElementApi'
-import { useExportApi } from 'cyweb/ExportApi'
-import { useNetworkApi } from 'cyweb/NetworkApi'
 import { useSelectionApi } from 'cyweb/SelectionApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
 
-import type { Cx2 } from '@cytoscape-web/api-types'
-
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
+import { useMcodeResultActions } from '../model/useMcodeResultActions'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
 import { NewAnalysisDialog } from './NewAnalysisDialog'
 
@@ -58,10 +55,10 @@ const OptionsMenu = ({
   onDiscardSelectedResult: () => void
   onDiscardAllResults: () => void
 }): JSX.Element => {
-  const workspaceApi = useWorkspaceApi()
-  const networkApi = useNetworkApi()
-  const exportApi = useExportApi()
-  const elementApi = useElementApi()
+  const { viewSourceNetwork, createClusterNetwork, exportResult } = useMcodeResultActions(
+    selectedResult,
+    selectedCluster,
+  )
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [showParametersResult, setShowParametersResult] = useState(false)
@@ -78,15 +75,10 @@ const OptionsMenu = ({
     setAnchorEl(null)
   }
 
+  // Menu items close the menu, then run the corresponding result action.
   const handleViewSourceNetwork = () => {
     handleOptionsClose()
-    if (!selectedResult) return
-    // Ask Cytoscape Web to make the source network the active/shown one.
-    const res = workspaceApi.switchCurrentNetwork(selectedResult.networkId)
-    console.debug('Switching to source network:', selectedResult.networkId, res)
-    if (!res.success) {
-      console.warn('Failed to switch to source network:', res.error.message)
-    }
+    viewSourceNetwork()
   }
   const handleApplyMcodeStyle = () => {
     handleOptionsClose()
@@ -94,142 +86,11 @@ const OptionsMenu = ({
   }
   const handleCreateClusterNetwork = () => {
     handleOptionsClose()
-    if (!selectedResult || !selectedCluster) return
-
-    const clusterNodes = new Set(selectedCluster.nodes)
-    const nodePositions = selectedCluster.nodePositions
-    const clusterName = `${selectedResult.name} (Cluster ${selectedCluster.rank})`
-
-    // Export the source network to CX2 and slice it down to the cluster, rather
-    // than building an edge list: CX2 carries the original node/edge table
-    // attributes (and visual styles), so the subnetwork preserves them.
-    const exported = exportApi.exportToCx2(selectedResult.networkId, { networkName: clusterName })
-    if (!exported.success) {
-      console.warn('Failed to export source network:', exported.error.message)
-      return
-    }
-
-    // Keep nodes that are in the cluster, and edges whose endpoints are both in
-    // the cluster. Node coordinates are replaced with the cluster's stored
-    // layout, so importing the CX2 does not run a layout algorithm.
-    let nodeCount = 0
-    let edgeCount = 0
-    const cxData: any[] = exported.data.map((aspect: Record<string, any>) => {
-      if (Array.isArray(aspect.nodes)) {
-        const nodes = aspect.nodes
-          .filter((n: any) => clusterNodes.has(String(n.id)))
-          .map((n: any) => {
-            const pos = nodePositions?.[String(n.id)]
-            return pos ? { ...n, x: pos.x, y: pos.y } : n
-          })
-        nodeCount = nodes.length
-        return { nodes }
-      }
-      if (Array.isArray(aspect.edges)) {
-        const edges = aspect.edges.filter(
-          (e: any) => clusterNodes.has(String(e.s)) && clusterNodes.has(String(e.t)),
-        )
-        edgeCount = edges.length
-        return { edges }
-      }
-      return aspect
-    })
-
-    // Keep the metaData element counts consistent with the sliced aspects.
-    for (const aspect of cxData) {
-      if (Array.isArray(aspect.metaData)) {
-        for (const meta of aspect.metaData as Array<{ name: string; elementCount?: number }>) {
-          if (meta.name === 'nodes' && meta.elementCount !== undefined) meta.elementCount = nodeCount
-          if (meta.name === 'edges' && meta.elementCount !== undefined) meta.elementCount = edgeCount
-        }
-      }
-    }
-
-    const created = networkApi.createNetworkFromCx2({
-      cxData: cxData as unknown as Cx2,
-      addToWorkspace: true,
-      navigate: true,
-    })
-    if (!created.success) {
-      console.warn('Failed to create cluster network:', created.error.message)
-    }
+    createClusterNetwork()
   }
   const handleExportResult = () => {
     handleOptionsClose()
-    if (!selectedResult) return
-
-    const { networkId, parameters: p, clusters, name } = selectedResult
-
-    // Resolve a node's display name from the source network ("name" column),
-    // falling back to the raw node id when no name attribute is present.
-    const nodeName = (nodeId: string): string => {
-      const node = elementApi.getNode(networkId, nodeId)
-      if (node.success) {
-        const value = node.data.attributes.name ?? node.data.attributes['shared name']
-        if (value !== undefined && value !== null) return String(value)
-      }
-      return nodeId
-    }
-
-    // Count the edges induced by the cluster's nodes in the source network
-    // (undirected, each unordered pair once) — i.e. the cluster's edge count.
-    const inducedEdgeCount = (nodes: string[]): number => {
-      const inCluster = new Set(nodes)
-      const seen = new Set<string>()
-      for (const nodeId of nodes) {
-        const connected = elementApi.getConnectedNodes(networkId, nodeId)
-        if (!connected.success) continue
-        for (const neighbor of connected.data.nodeIds) {
-          if (!inCluster.has(neighbor)) continue
-          seen.add(nodeId < neighbor ? `${nodeId}|${neighbor}` : `${neighbor}|${nodeId}`)
-        }
-      }
-      return seen.size
-    }
-
-    // Up to 3 fraction digits, trailing zeros stripped (matches the Java
-    // NumberFormat with maximumFractionDigits = 3).
-    const formatScore = (score: number): string => String(Number(score.toFixed(3)))
-
-    const lines: string[] = [
-      'MCODE App Results',
-      `Date: ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })}`,
-      '',
-      'Parameters:',
-      '   Network Scoring:',
-      `      Include Loops: ${p.includeLoops}  Degree Cutoff: ${p.degreeCutoff}`,
-      '   Cluster Finding:',
-      `      Node Score Cutoff: ${p.nodeScoreCutoff}  Haircut: ${p.haircut}  Fluff: ${p.fluff}` +
-        `  K-Core: ${p.kCore}  Max. Depth from Seed: ${p.maxDepthFromStart}`,
-      '',
-      'Cluster\tScore (Density*#Nodes)\tNodes\tEdges\tNode IDs',
-    ]
-
-    clusters.forEach((cluster, i) => {
-      const ids = cluster.nodes.map(nodeName).join(', ')
-      lines.push(
-        `${i + 1}\t${formatScore(cluster.score)}\t${cluster.nodes.length}` +
-          `\t${inducedEdgeCount(cluster.nodes)}\t${ids}`,
-      )
-    })
-
-    const content = lines.join('\n') + '\n'
-
-    // Name the file after the source network, e.g. "galFiltered-mcode-results.txt".
-    const summary = workspaceApi.getNetworkSummary(networkId)
-    const networkName = summary.success ? summary.data.name : name
-    const fileName = `${networkName}-mcode-results.txt`
-
-    // Trigger a browser download of the text file.
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = fileName
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
+    exportResult()
   }
   const handleShowAnalysisParameters = () => {
     handleOptionsClose()
