@@ -61,6 +61,7 @@ const OptionsMenu = ({
   const workspaceApi = useWorkspaceApi()
   const networkApi = useNetworkApi()
   const exportApi = useExportApi()
+  const elementApi = useElementApi()
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [showParametersResult, setShowParametersResult] = useState(false)
@@ -155,7 +156,80 @@ const OptionsMenu = ({
   }
   const handleExportResult = () => {
     handleOptionsClose()
-    // TODO
+    if (!selectedResult) return
+
+    const { networkId, parameters: p, clusters, name } = selectedResult
+
+    // Resolve a node's display name from the source network ("name" column),
+    // falling back to the raw node id when no name attribute is present.
+    const nodeName = (nodeId: string): string => {
+      const node = elementApi.getNode(networkId, nodeId)
+      if (node.success) {
+        const value = node.data.attributes.name ?? node.data.attributes['shared name']
+        if (value !== undefined && value !== null) return String(value)
+      }
+      return nodeId
+    }
+
+    // Count the edges induced by the cluster's nodes in the source network
+    // (undirected, each unordered pair once) — i.e. the cluster's edge count.
+    const inducedEdgeCount = (nodes: string[]): number => {
+      const inCluster = new Set(nodes)
+      const seen = new Set<string>()
+      for (const nodeId of nodes) {
+        const connected = elementApi.getConnectedNodes(networkId, nodeId)
+        if (!connected.success) continue
+        for (const neighbor of connected.data.nodeIds) {
+          if (!inCluster.has(neighbor)) continue
+          seen.add(nodeId < neighbor ? `${nodeId}|${neighbor}` : `${neighbor}|${nodeId}`)
+        }
+      }
+      return seen.size
+    }
+
+    // Up to 3 fraction digits, trailing zeros stripped (matches the Java
+    // NumberFormat with maximumFractionDigits = 3).
+    const formatScore = (score: number): string => String(Number(score.toFixed(3)))
+
+    const lines: string[] = [
+      'MCODE App Results',
+      `Date: ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })}`,
+      '',
+      'Parameters:',
+      '   Network Scoring:',
+      `      Include Loops: ${p.includeLoops}  Degree Cutoff: ${p.degreeCutoff}`,
+      '   Cluster Finding:',
+      `      Node Score Cutoff: ${p.nodeScoreCutoff}  Haircut: ${p.haircut}  Fluff: ${p.fluff}` +
+        `  K-Core: ${p.kCore}  Max. Depth from Seed: ${p.maxDepthFromStart}`,
+      '',
+      'Cluster\tScore (Density*#Nodes)\tNodes\tEdges\tNode IDs',
+    ]
+
+    clusters.forEach((cluster, i) => {
+      const ids = cluster.nodes.map(nodeName).join(', ')
+      lines.push(
+        `${i + 1}\t${formatScore(cluster.score)}\t${cluster.nodes.length}` +
+          `\t${inducedEdgeCount(cluster.nodes)}\t${ids}`,
+      )
+    })
+
+    const content = lines.join('\n') + '\n'
+
+    // Name the file after the source network, e.g. "galFiltered-mcode-results.txt".
+    const summary = workspaceApi.getNetworkSummary(networkId)
+    const networkName = summary.success ? summary.data.name : name
+    const fileName = `${networkName}-mcode-results.txt`
+
+    // Trigger a browser download of the text file.
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
   }
   const handleShowAnalysisParameters = () => {
     handleOptionsClose()
