@@ -548,8 +548,12 @@ const MCODEPanel = (): JSX.Element => {
         }
         return results.length > 1 ? results[1] : null
       })
-      setResults((prev) => prev.filter((r) => r !== selectedResult))
+      const updatedResults = results.filter((r) => r !== selectedResult)
+      setResults(updatedResults)
       setSelectedCluster(null)
+      if (updatedResults.length === 0) {
+        nextResultId.current = 1
+      }
     }
   }
   const handleDiscardAllResults = (): void => {
@@ -557,6 +561,7 @@ const MCODEPanel = (): JSX.Element => {
     setSelectedResult(null)
     setResults([])
     setSelectedCluster(null)
+    nextResultId.current = 1
   }
 
   return (
