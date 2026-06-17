@@ -70,11 +70,12 @@ export class MCODEAlgorithm {
       this.nodeInfo.set(nodeId, info)
     }
 
-    // Order nodes by descending score; ties broken by id for determinism.
-    this.nodesByScoreDesc = [...this.graph.nodes].sort((a, b) => {
-      const diff = this.scoreOf(b) - this.scoreOf(a)
-      return diff !== 0 ? diff : a < b ? -1 : a > b ? 1 : 0
-    })
+    // Order nodes by descending score. Equal-scored nodes keep the graph's node
+    // order (i.e. the source network's node order), matching the Java
+    // implementation, which seeds tied nodes in network node-list order. Array
+    // sort is stable (ES2019+), so returning 0 for ties preserves that order —
+    // do NOT tie-break by node id, since the seed must follow network order.
+    this.nodesByScoreDesc = [...this.graph.nodes].sort((a, b) => this.scoreOf(b) - this.scoreOf(a))
   }
 
   /**

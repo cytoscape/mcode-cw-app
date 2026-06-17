@@ -13,6 +13,9 @@
     "noEmit": false,
     "types": ["node"]
   },
+  // Only the test files; tsc pulls in their (pure) imports automatically. This
+  // intentionally excludes the React hooks / web worker under src/model (e.g.
+  // useMcodeWorker.ts uses import.meta, which can't compile to CommonJS).
   "files": [],
-  "include": ["src/model/**/*.ts"]
+  "include": ["src/model/**/*.test.ts"]
 }

@@ -14,9 +14,15 @@
  * License, version 2.1 or (at your option) any later version.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_MCODE_PARAMETERS = void 0;
+exports.DEFAULT_MCODE_PARAMETERS = exports.MCODE_ANALYSIS_SCOPE_LABELS = void 0;
+/** Human-readable labels for each scope (matches the Java enum's toString). */
+exports.MCODE_ANALYSIS_SCOPE_LABELS = {
+    NETWORK: 'In Whole Network',
+    SELECTION: 'From Selection',
+};
 /** Default MCODE parameters (match the Cytoscape MCODE app). */
 exports.DEFAULT_MCODE_PARAMETERS = {
+    scope: 'NETWORK',
     includeLoops: false,
     degreeCutoff: 2,
     kCore: 2,
