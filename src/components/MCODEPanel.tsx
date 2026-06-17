@@ -249,26 +249,27 @@ const ClusterThumbnail = ({
       return
     }
 
-    // Collect the edges induced by the cluster: keep only those whose both
-    // endpoints belong to the cluster. getConnectedNodes is undirected, so we
-    // canonicalize each pair to avoid adding it twice.
+    // Collect every edge whose endpoints are both in the cluster. We iterate the
+    // network's edges by id (rather than using getConnectedNodes, which yields
+    // one neighbor per pair) so that parallel edges between the same pair of
+    // nodes are all kept, each with its own id.
     const clusterNodes = new Set(cluster.nodes)
-    const edgeKeys = new Set<string>()
-    for (const nodeId of cluster.nodes) {
-      const connected = elementApi.getConnectedNodes(networkId, nodeId)
-      if (!connected.success) continue
-      for (const neighbor of connected.data.nodeIds) {
-        if (!clusterNodes.has(neighbor)) continue
-        edgeKeys.add(nodeId < neighbor ? `${nodeId}|${neighbor}` : `${neighbor}|${nodeId}`)
+    const clusterEdges: { id: string; source: string; target: string }[] = []
+    const edgeIdsResult = elementApi.getEdgeIds(networkId)
+    if (edgeIdsResult.success) {
+      for (const edgeId of edgeIdsResult.data.edgeIds) {
+        const edge = elementApi.getEdge(networkId, edgeId)
+        if (!edge.success) continue
+        const { sourceId, targetId } = edge.data
+        if (clusterNodes.has(sourceId) && clusterNodes.has(targetId)) {
+          clusterEdges.push({ id: edgeId, source: sourceId, target: targetId })
+        }
       }
     }
 
     const elements: cytoscape.ElementDefinition[] = [
       ...cluster.nodes.map((id) => ({ data: { id, 'Node Status': cluster.seedId === id ? 'Seed' : 'Clustered' } })),
-      ...[...edgeKeys].map((key) => {
-        const [source, target] = key.split('|')
-        return { data: { id: key, source, target } }
-      }),
+      ...clusterEdges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target } })),
     ]
 
     // Cytoscape's canvas renderer needs a sized DOM node, so render into a
