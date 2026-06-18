@@ -358,6 +358,67 @@ const ClusterThumbnail = ({
   )
 }
 
+const ClusterPanel = ({
+  networkId,
+  cluster,
+  selected,
+  onClick,
+}: {
+  networkId: string
+  cluster: MCODECluster
+  selected: boolean
+  onClick: (cluster: MCODECluster) => void
+}): JSX.Element => {
+
+  return (
+    <Box
+      onClick={() => onClick(cluster)}
+      sx={{
+        px: 2,
+        py: 0.5,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        cursor: 'pointer',
+        bgcolor: selected ? 'action.selected' : 'background.paper',
+        borderBottom: (theme) => `2px solid ${theme.palette.background.default}`,
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+        }}
+      >
+        <Typography
+          variant="body1"
+          sx={{
+            textAlign: 'right',
+            width: 32,
+            flexShrink: 0,
+            color: 'text.secondary',
+            fontWeight: 'bold',
+          }}
+        >
+          {cluster.rank}
+        </Typography>
+        <Box>
+          <ClusterThumbnail networkId={networkId} cluster={cluster} />
+        </Box>
+        <Box>
+          <Typography variant="body1" color="text.secondary">
+            Score: {Math.round(cluster.score * 100) / 100}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Nodes: {cluster.nodes.length}
+          </Typography>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
 const MCODEPanel = (): JSX.Element => {
   const workspaceApi = useWorkspaceApi()
   const elementApi = useElementApi()
@@ -683,52 +744,13 @@ const MCODEPanel = (): JSX.Element => {
           }}
         >
           {selectedResult?.clusters.map((cluster, i) => (
-            <Box
+            <ClusterPanel
               key={i}
-              onClick={() => handleClusterClick(cluster)}
-              sx={{
-                px: 2,
-                py: 0.5,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                cursor: 'pointer',
-                bgcolor: selectedCluster === cluster ? 'action.selected' : 'background.paper',
-                borderBottom: (theme) => `2px solid ${theme.palette.background.default}`,
-              }}
-            >
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{
-                    textAlign: 'right',
-                    width: 32,
-                    flexShrink: 0,
-                    color: 'text.secondary',
-                    fontWeight: 'bold',
-                  }}
-                >
-                  {i + 1}
-                </Typography>
-                <Box>
-                  <ClusterThumbnail networkId={selectedResult.networkId} cluster={cluster} />
-                </Box>
-                <Box>
-                  <Typography variant="body1" color="text.secondary">
-                    Score: {Math.round(cluster.score * 100) / 100}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Nodes: {cluster.nodes.length}
-                  </Typography>
-                </Box>
-              </Box>
-            </Box>
+              networkId={selectedResult.networkId}
+              cluster={cluster}
+              selected={selectedCluster === cluster}
+              onClick={handleClusterClick}
+            />
           ))}
         </Box>
       </Box>
