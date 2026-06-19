@@ -20,6 +20,7 @@ import {
   Menu,
   MenuItem,
   Select,
+  Slider,
   Tooltip,
   Typography
 } from '@mui/material'
@@ -359,16 +360,21 @@ const ClusterThumbnail = ({
 }
 
 const ClusterPanel = ({
-  networkId,
   cluster,
+  networkId,
+  nodeScoreCutoff,
   selected,
   onClick,
 }: {
-  networkId: string
   cluster: MCODECluster
+  networkId: string
+  nodeScoreCutoff: number
   selected: boolean
   onClick: (cluster: MCODECluster) => void
 }): JSX.Element => {
+  const handleChange = (event: React.SyntheticEvent | Event, value: number | number[]): void => {
+    console.debug('Node score cutoff changed:', value)
+  }
 
   return (
     <Box
@@ -389,6 +395,7 @@ const ClusterPanel = ({
           display: 'flex',
           alignItems: 'center',
           gap: 2,
+          flexGrow: 1,
         }}
       >
         <Typography
@@ -406,12 +413,32 @@ const ClusterPanel = ({
         <Box>
           <ClusterThumbnail networkId={networkId} cluster={cluster} />
         </Box>
-        <Box>
-          <Typography variant="body1" color="text.secondary">
-            Score: {Math.round(cluster.score * 100) / 100}
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ width: '100%', textAlign: 'right' }}>
+            {(Math.round(cluster.score * 100) / 100).toFixed(2)}
           </Typography>
+          <Tooltip title="Size Threshold (Node Score Cutoff)">
+            <Slider
+              aria-label="Node Score Cutoff"
+              defaultValue={nodeScoreCutoff}
+              getAriaValueText={(val) => val.toFixed(2)}
+              valueLabelFormat={(val) => val.toFixed(2)}
+              step={0.01}
+              marks={[
+                {
+                  value: nodeScoreCutoff,
+                  label: '',
+                },
+              ]}
+              track={false}
+              min={0}
+              max={1.0}
+              valueLabelDisplay="auto"
+              onChangeCommitted={handleChange}
+            />
+          </Tooltip>
           <Typography variant="body2" color="text.secondary">
-            Nodes: {cluster.nodes.length}
+            {cluster.nodes.length} node{cluster.nodes.length !== 1 ? 's' : ''}
           </Typography>
         </Box>
       </Box>
@@ -746,8 +773,9 @@ const MCODEPanel = (): JSX.Element => {
           {selectedResult?.clusters.map((cluster, i) => (
             <ClusterPanel
               key={i}
-              networkId={selectedResult.networkId}
               cluster={cluster}
+              networkId={selectedResult.networkId}
+              nodeScoreCutoff={selectedResult.parameters.nodeScoreCutoff}
               selected={selectedCluster === cluster}
               onClick={handleClusterClick}
             />
