@@ -6,6 +6,7 @@
  * `AdjacencyMap` is a `Map<string, string[]>`, and `MCODEParameters` /
  * `MCODECluster` are plain objects, so they post across the boundary as-is.
  */
+import { MCODEAlgorithmSnapshot } from './mcodeAlgorithm'
 import { AdjacencyMap, MCODECluster, MCODEParameters } from './mcodeTypes'
 
 /** Main thread → worker: the graph and parameters to analyze. */
@@ -15,10 +16,10 @@ export interface MCODEWorkerRequest {
 }
 
 /**
- * Worker → main thread: on success, the ranked clusters plus every analyzed
- * node's score (keyed by node id), used to populate the result's node columns.
- * On failure, an error message.
+ * Worker → main thread: on success, the ranked clusters plus a snapshot of the
+ * scored algorithm state (so the main thread can rehydrate the MCODEAlgorithm
+ * and reuse its cached nodeInfo/scores). On failure, an error message.
  */
 export type MCODEWorkerResponse =
-  | { type: 'success'; clusters: MCODECluster[]; scores: Record<string, number> }
+  | { type: 'success'; clusters: MCODECluster[]; snapshot: MCODEAlgorithmSnapshot }
   | { type: 'error'; message: string }

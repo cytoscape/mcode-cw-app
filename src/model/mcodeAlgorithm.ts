@@ -30,9 +30,24 @@ import {
   NodeInfo,
 } from './mcodeTypes'
 
+/**
+ * Structured-cloneable snapshot of a scored algorithm's state. Used to carry
+ * the algorithm out of the web worker (which can't transfer a class instance)
+ * and rehydrate it on the main thread — see toSnapshot()/fromSnapshot().
+ */
+export interface MCODEAlgorithmSnapshot {
+  params: MCODEParameters
+  adjacency: AdjacencyMap
+  nodeInfo: Map<string, NodeInfo>
+  nodesByScoreDesc: string[]
+}
+
 export class MCODEAlgorithm {
   private readonly params: MCODEParameters
 
+  /** The adjacency the graph was scored from; retained so the scored state can
+   *  be snapshotted and rehydrated (the graph is rebuilt from it). */
+  private adjacency: AdjacencyMap = new Map()
   /** Full input network as an MCODEGraph. Set during scoreGraph(). */
   private graph: MCODEGraph | null = null
   /** Per-node cached metrics (density, k-core, score), keyed by node id. */
@@ -61,6 +76,7 @@ export class MCODEAlgorithm {
    * scoreGraph()/calcNodeInfo()/scoreNode() trio; runs sequentially here.
    */
   scoreGraph(adjacency: AdjacencyMap): void {
+    this.adjacency = adjacency
     this.graph = new MCODEGraph(adjacency.keys(), adjacency)
     this.nodeInfo = new Map()
 
@@ -148,7 +164,17 @@ export class MCODEAlgorithm {
       // Only positively-scored nodes can seed a cluster.
       if (this.scoreOf(seedId) <= 0) continue
 
-      const coreNodes = this.getClusterCore(seedId, nodeSeen)
+      // Snapshot the nodes already claimed by higher-ranked clusters (taken
+      // before this cluster expands) so exploreCluster() can preserve their
+      // priority when shrinking this cluster later.
+      const nodeSeenSnapshot = [...nodeSeen]
+
+      const coreNodes = this.getClusterCore(
+        seedId,
+        nodeSeen,
+        this.params.nodeScoreCutoff,
+        this.params.maxDepthFromStart,
+      )
       if (coreNodes.length === 0) continue
 
       let clusterGraph = graph.subgraph(coreNodes)
@@ -175,6 +201,7 @@ export class MCODEAlgorithm {
         nodes,
         score: this.scoreCluster(clusterGraph),
         rank: 0, // assigned by rank()
+        nodeSeenSnapshot,
       })
     }
 
@@ -182,14 +209,68 @@ export class MCODEAlgorithm {
   }
 
   /**
+   * Re-grow a single cluster from its seed using a different node-score cutoff,
+   * reusing the cached node scoring (no rescoring). Mirrors the Java
+   * exploreCluster(): unlike findClusters there is NO k-core filter, so the
+   * cluster can shrink all the way to a single node.
+   *
+   * Returns a NEW cluster (the input is not mutated). `seedId` and `rank` are
+   * preserved; `nodes` and `score` are recomputed; `nodePositions` is left unset
+   * so the caller's thumbnail regenerates its layout. Because it re-expands from
+   * the seed (not from the cluster's current nodes), it is idempotent for a
+   * given cutoff.
+   */
+  exploreCluster(cluster: MCODECluster, nodeScoreCutoff: number): MCODECluster {
+    const graph = this.requireGraph()
+    const params = this.params
+
+    // At or below the original cutoff, respect the nodes already claimed by
+    // higher-ranked clusters (keeps their priority); above it, let the cluster
+    // accrue nodes freely.
+    const nodeSeen =
+      nodeScoreCutoff <= params.nodeScoreCutoff
+        ? new Set(cluster.nodeSeenSnapshot ?? [])
+        : new Set<string>()
+
+    const { seedId } = cluster
+    let nodes = this.getClusterCore(seedId, nodeSeen, nodeScoreCutoff, params.maxDepthFromStart)
+    if (!nodes.includes(seedId)) nodes.push(seedId)
+
+    let clusterGraph = graph.subgraph(nodes)
+
+    if (params.haircut) {
+      nodes = this.haircutCluster(clusterGraph)
+      clusterGraph = graph.subgraph(nodes)
+    }
+    if (params.fluff) {
+      nodes = this.fluffCluster(nodes, nodeSeen)
+      clusterGraph = graph.subgraph(nodes)
+    }
+
+    return {
+      seedId,
+      nodes,
+      score: this.scoreCluster(clusterGraph),
+      rank: cluster.rank,
+      nodeScoreCutoff,
+      nodeSeenSnapshot: cluster.nodeSeenSnapshot,
+    }
+  }
+
+  /**
    * Build the list of nodes forming a cluster core grown from `seedId`.
    * Mirrors getClusterCore(): the seed is included, then neighbors are added
    * recursively when their score clears the seed-relative threshold.
    */
-  private getClusterCore(seedId: string, nodeSeen: Set<string>): string[] {
+  private getClusterCore(
+    seedId: string,
+    nodeSeen: Set<string>,
+    nodeScoreCutoff: number,
+    maxDepthFromStart: number,
+  ): string[] {
     const cluster: string[] = [seedId]
     const seedScore = this.scoreOf(seedId)
-    this.getClusterCoreInternal(seedId, nodeSeen, seedScore, 1, cluster)
+    this.getClusterCoreInternal(seedId, nodeSeen, seedScore, 1, cluster, nodeScoreCutoff, maxDepthFromStart)
     return cluster
   }
 
@@ -205,13 +286,15 @@ export class MCODEAlgorithm {
     seedScore: number,
     depth: number,
     cluster: string[],
+    nodeScoreCutoff: number,
+    maxDepthFromStart: number,
   ): void {
     if (nodeSeen.has(startId)) return
-    if (depth > this.params.maxDepthFromStart) return
+    if (depth > maxDepthFromStart) return
 
     nodeSeen.add(startId)
 
-    const threshold = seedScore * (1 - this.params.nodeScoreCutoff)
+    const threshold = seedScore * (1 - nodeScoreCutoff)
     const info = this.nodeInfo.get(startId)
     if (info === undefined) return
 
@@ -225,6 +308,8 @@ export class MCODEAlgorithm {
           seedScore,
           depth + 1,
           cluster,
+          nodeScoreCutoff,
+          maxDepthFromStart,
         )
       }
     }
@@ -304,6 +389,11 @@ export class MCODEAlgorithm {
 
   // ── Public accessors ────────────────────────────────────────────────────────
 
+  /** The parameters this algorithm was configured with. */
+  getParameters(): MCODEParameters {
+    return this.params
+  }
+
   /** Score assigned to a node during scoreGraph(); 0 if the node is unknown. */
   getNodeScore(nodeId: string): number {
     return this.scoreOf(nodeId)
@@ -312,6 +402,44 @@ export class MCODEAlgorithm {
   /** Cached metrics for a node, or undefined if it was never scored. */
   getNodeInfo(nodeId: string): NodeInfo | undefined {
     return this.nodeInfo.get(nodeId)
+  }
+
+  /** Every scored node's score, keyed by node id. */
+  getScores(): Record<string, number> {
+    const scores: Record<string, number> = {}
+    for (const [nodeId, info] of this.nodeInfo) scores[nodeId] = info.score
+    return scores
+  }
+
+  // ── Serialization ───────────────────────────────────────────────────────────
+
+  /**
+   * Capture the scored state into a structured-cloneable snapshot, so the
+   * algorithm can be transferred out of the web worker. Rehydrate it on the
+   * main thread with fromSnapshot().
+   */
+  toSnapshot(): MCODEAlgorithmSnapshot {
+    return {
+      params: this.params,
+      adjacency: this.adjacency,
+      nodeInfo: this.nodeInfo,
+      nodesByScoreDesc: this.nodesByScoreDesc,
+    }
+  }
+
+  /**
+   * Reconstruct an algorithm from a snapshot. The graph is rebuilt from the
+   * adjacency, and the cached node metrics + seed order are restored as-is, so
+   * findClusters() (and future cluster-exploration) can run again without
+   * recomputing the expensive per-node scoring.
+   */
+  static fromSnapshot(snapshot: MCODEAlgorithmSnapshot): MCODEAlgorithm {
+    const alg = new MCODEAlgorithm(snapshot.params)
+    alg.adjacency = snapshot.adjacency
+    alg.graph = new MCODEGraph(snapshot.adjacency.keys(), snapshot.adjacency)
+    alg.nodeInfo = snapshot.nodeInfo
+    alg.nodesByScoreDesc = snapshot.nodesByScoreDesc
+    return alg
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

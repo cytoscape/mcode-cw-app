@@ -13,6 +13,10 @@
  * License, version 2.1 or (at your option) any later version.
  */
 
+// Type-only import: MCODEResult references the algorithm class, but this stays
+// erased at compile time so there's no runtime import cycle with mcodeAlgorithm.
+import type { MCODEAlgorithm } from './mcodeAlgorithm'
+
 /** An undirected graph expressed as `nodeId -> neighborNodeIds`. */
 export type AdjacencyMap = Map<string, string[]>
 
@@ -81,17 +85,30 @@ export interface MCODECluster {
   nodes: string[]
   /** Cluster score = density * nodeCount. */
   score: number
+  /** Node-score cutoff this cluster was last (re)grown with, if explored. */
+  nodeScoreCutoff?: number
   /** 1-based rank after sorting clusters by descending score. */
   rank: number
   /** The node positions, after the cluster thumbnail is generated. */
   nodePositions?: Record<string, { x: number; y: number }>
+  /**
+   * Snapshot of the node ids already consumed by higher-ranked clusters when
+   * this cluster was seeded. Used by MCODEAlgorithm.exploreCluster() to keep
+   * those clusters' priority when shrinking. Internal to the algorithm.
+   */
+  nodeSeenSnapshot?: string[]
 }
 
 export interface MCODEResult {
   id: number
   name: string
   networkId: string
-  parameters: MCODEParameters
+  /**
+   * The algorithm instance used for this result. It carries the parameters
+   * (getParameters()) plus the cached scoring state (nodeInfo, etc.), so
+   * features like cluster exploration can re-run without rescoring.
+   */
+  algorithm: MCODEAlgorithm
   clusters: MCODECluster[]
 }
 

@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react'
 
+import { MCODEAlgorithm } from './mcodeAlgorithm'
 import { AdjacencyMap, MCODECluster, MCODEParameters } from './mcodeTypes'
 import { MCODEWorkerRequest, MCODEWorkerResponse } from './mcodeWorkerTypes'
 
@@ -20,10 +21,11 @@ export class McodeCancelledError extends Error {
   }
 }
 
-/** Result of a successful analysis: ranked clusters plus per-node scores. */
+/** Result of a successful analysis: ranked clusters plus the (rehydrated)
+ *  algorithm instance carrying the cached scoring state. */
 export interface MCODEAnalysisResult {
   clusters: MCODECluster[]
-  scores: Record<string, number>
+  algorithm: MCODEAlgorithm
 }
 
 type Pending = {
@@ -44,6 +46,11 @@ type Pending = {
  * cross-origin — see createMcodeWorker), we briefly swap in a stub `Worker`
  * that just records its first argument. The swap is synchronous and restored in
  * `finally`, so nothing else can observe it.
+ *
+ * The `{ name }` option pins the worker's chunk filename (e.g. `mcode-worker.js`)
+ * instead of a chunk-id-derived name. That keeps the URL stable when unrelated
+ * changes shift webpack's chunk ids — otherwise the dev server's worker child
+ * compilation can desync and serve a 404 for the captured URL.
  */
 function resolveWorkerChunkUrl(): string {
   const RealWorker = globalThis.Worker
@@ -55,8 +62,12 @@ function resolveWorkerChunkUrl(): string {
   } as unknown as typeof Worker
 
   try {
+    // The 'mcode-worker' name is load-bearing: webpack.config.js's
+    // optimization.splitChunks excludes this chunk name from splitting so the
+    // worker stays self-contained (it's loaded via a cross-origin blob and can't
+    // fetch sibling chunks). Keep the two in sync if you rename it.
     // eslint-disable-next-line no-new
-    new Worker(new URL('./mcode.worker.ts', import.meta.url))
+    new Worker(new URL('./mcode.worker.ts', import.meta.url), { name: 'mcode-worker' })
   } finally {
     globalThis.Worker = RealWorker
   }
@@ -76,10 +87,28 @@ function resolveWorkerChunkUrl(): string {
  * `Access-Control-Allow-Origin: *`). This path also works unchanged same-origin.
  */
 function createMcodeWorker(): Worker {
-  const bootstrap = `importScripts(${JSON.stringify(resolveWorkerChunkUrl())})`
+  const workerUrl = resolveWorkerChunkUrl()
+  // Log the resolved URL so it can be checked directly (browser Network tab /
+  // curl) when diagnosing load failures.
+  console.debug(`Creating MCODE worker from: ${workerUrl}`)
+
+  const bootstrap = `importScripts(${JSON.stringify(workerUrl)})`
   const blobUrl = URL.createObjectURL(new Blob([bootstrap], { type: 'application/javascript' }))
   try {
-    return new Worker(blobUrl)
+    const worker = new Worker(blobUrl)
+    // A failed importScripts of the (cross-origin) worker chunk surfaces here as
+    // an often-opaque error event. Echo the URL and a hint, since the event
+    // message is usually empty for cross-origin worker load failures. (The
+    // hook's onerror handler is what actually rejects the pending analysis.)
+    worker.addEventListener('error', (event) => {
+      console.error(
+        `MCODE worker failed to load from "${workerUrl}". ` +
+          'Check that the dev server serves this exact URL (HTTP 200) — a stale ' +
+          'dev server usually needs a full restart, not just HMR. ' +
+          `Worker error: ${event.message || '(no message; likely a cross-origin load failure)'}`,
+      )
+    })
+    return worker
   } finally {
     // The Worker has already fetched the bootstrap script; the blob URL can go.
     URL.revokeObjectURL(blobUrl)
@@ -103,7 +132,10 @@ export function useMcodeWorker(): McodeWorkerController {
 
     if (response instanceof Error) pending.reject(response)
     else if (response.type === 'success')
-      pending.resolve({ clusters: response.clusters, scores: response.scores })
+      pending.resolve({
+        clusters: response.clusters,
+        algorithm: MCODEAlgorithm.fromSnapshot(response.snapshot),
+      })
     else pending.reject(new Error(response.message))
   })
 

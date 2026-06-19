@@ -33,6 +33,7 @@ import { useTableApi } from 'cyweb/TableApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
 
+import { MCODEAlgorithm } from '../model/mcodeAlgorithm'
 import { buildMcodeNodeTableData, mcodeColumnNames } from '../model/mcodeExport'
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { useMcodeResultActions } from '../model/useMcodeResultActions'
@@ -365,15 +366,30 @@ const ClusterPanel = ({
   nodeScoreCutoff,
   selected,
   onClick,
+  onExplore,
 }: {
   cluster: MCODECluster
   networkId: string
   nodeScoreCutoff: number
   selected: boolean
   onClick: (cluster: MCODECluster) => void
+  onExplore: (cluster: MCODECluster, nodeScoreCutoff: number) => void
 }): JSX.Element => {
-  const handleChange = (event: React.SyntheticEvent | Event, value: number | number[]): void => {
-    console.debug('Node score cutoff changed:', value)
+  // Controlled slider value: the cluster's explored cutoff if any, else the
+  // analysis default. Initialized once per mount — the result+seed key on this
+  // component remounts it (re-seeding this state) when the user switches results.
+  const [cutoff, setCutoff] = useState(cluster.nodeScoreCutoff ?? nodeScoreCutoff)
+
+  // Track the thumb live while dragging...
+  const handleChange = (event: Event, value: number | number[]): void => {
+    setCutoff(value as number)
+  }
+  // ...and re-grow the cluster only when the drag is released.
+  const handleChangeCommitted = (
+    event: React.SyntheticEvent | Event,
+    value: number | number[],
+  ): void => {
+    onExplore(cluster, value as number)
   }
 
   return (
@@ -420,7 +436,7 @@ const ClusterPanel = ({
           <Tooltip title="Size Threshold (Node Score Cutoff)">
             <Slider
               aria-label="Node Score Cutoff"
-              defaultValue={nodeScoreCutoff}
+              value={cutoff}
               getAriaValueText={(val) => val.toFixed(2)}
               valueLabelFormat={(val) => val.toFixed(2)}
               step={0.01}
@@ -434,7 +450,8 @@ const ClusterPanel = ({
               min={0}
               max={1.0}
               valueLabelDisplay="auto"
-              onChangeCommitted={handleChange}
+              onChange={handleChange}
+              onChangeCommitted={handleChangeCommitted}
             />
           </Tooltip>
           <Typography variant="body2" color="text.secondary">
@@ -537,10 +554,10 @@ const MCODEPanel = (): JSX.Element => {
     // 3. Run MCODE in a web worker so a large network doesn't freeze the UI.
     //    A spinner is shown while `analyzing` is true.
     let clusters: MCODECluster[]
-    let scores: Record<string, number>
+    let algorithm: MCODEAlgorithm
     setAnalyzing(true)
     try {
-      ;({ clusters, scores } = await runMcode(adjacency, parameters))
+      ;({ clusters, algorithm } = await runMcode(adjacency, parameters))
     } catch (err) {
       // A user cancellation is expected; only warn on genuine failures.
       if (err instanceof McodeCancelledError) {
@@ -570,7 +587,7 @@ const MCODEPanel = (): JSX.Element => {
       id,
       name: `${id} - ${networkName}`,
       networkId: currentNetworkId,
-      parameters,
+      algorithm,
       clusters,
     }
     setResults((prev) => [...prev, newResult])
@@ -579,7 +596,7 @@ const MCODEPanel = (): JSX.Element => {
 
     // 5. Add the MCODE result columns to the source network's node table:
     //    "MCODE::Score (n)", "MCODE::Node Status (n)", "MCODE::Clusters (n)".
-    const { columns, rows } = buildMcodeNodeTableData(id, clusters, scores)
+    const { columns, rows } = buildMcodeNodeTableData(id, clusters, algorithm.getScores())
     for (const col of columns) {
       const created = tableApi.createColumn(currentNetworkId, 'node', col.name, col.type, col.defaultValue)
       if (!created.success) {
@@ -608,6 +625,30 @@ const MCODEPanel = (): JSX.Element => {
     )
     if (!selected.success) {
       console.warn('Failed to select cluster nodes:', selected.error.message)
+    }
+  }
+
+  // Re-grow a cluster at a new node-score cutoff (the size slider) and replace
+  // it in the result, immutably, so its thumbnail/score/node count update.
+  const handleExploreCluster = (cluster: MCODECluster, nodeScoreCutoff: number): void => {
+    if (!selectedResult) return
+
+    const explored = selectedResult.algorithm.exploreCluster(cluster, nodeScoreCutoff)
+    const updatedResult: MCODEResult = {
+      ...selectedResult,
+      clusters: selectedResult.clusters.map((c) => (c === cluster ? explored : c)),
+    }
+    setResults((prev) => prev.map((r) => (r === selectedResult ? updatedResult : r)))
+    setSelectedResult(updatedResult)
+
+    // If the explored cluster is the selected one, re-select its (now changed)
+    // nodes in the source network so the selection tracks the new cluster.
+    if (selectedCluster === cluster) {
+      setSelectedCluster(explored)
+      const selected = selectionApi.exclusiveSelect(selectedResult.networkId, explored.nodes, [])
+      if (!selected.success) {
+        console.warn('Failed to re-select explored cluster nodes:', selected.error.message)
+      }
     }
   }
 
@@ -734,33 +775,33 @@ const MCODEPanel = (): JSX.Element => {
           borderTop: (theme) => `2px solid ${theme.palette.background.paper}`,
         }}>
           <Typography variant="body2" color="text.secondary">
-            Scope: {selectedResult.parameters.scope === 'NETWORK' ? 'Whole Network' : 'Selected Nodes'}
+            Scope: {selectedResult.algorithm.getParameters().scope === 'NETWORK' ? 'Whole Network' : 'Selected Nodes'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Include Loops: {selectedResult.parameters.includeLoops ? 'Yes' : 'No'}
+            Include Loops: {selectedResult.algorithm.getParameters().includeLoops ? 'Yes' : 'No'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Degree Cutoff: {selectedResult.parameters.degreeCutoff}
+            Degree Cutoff: {selectedResult.algorithm.getParameters().degreeCutoff}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Haircut: {selectedResult.parameters.haircut ? 'Yes' : 'No'}
+            Haircut: {selectedResult.algorithm.getParameters().haircut ? 'Yes' : 'No'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Fluff: {selectedResult.parameters.fluff ? 'Yes' : 'No'}
+            Fluff: {selectedResult.algorithm.getParameters().fluff ? 'Yes' : 'No'}
           </Typography>
-          {selectedResult.parameters.fluff && (
+          {selectedResult.algorithm.getParameters().fluff && (
             <Typography variant="body2" color="text.secondary">
-              Fluff Node Density Cutoff: {selectedResult.parameters.fluffNodeDensityCutoff}
+              Fluff Node Density Cutoff: {selectedResult.algorithm.getParameters().fluffNodeDensityCutoff}
             </Typography>
           )}
           <Typography variant="body2" color="text.secondary">
-            Node Score Cutoff: {selectedResult.parameters.nodeScoreCutoff}
+            Node Score Cutoff: {selectedResult.algorithm.getParameters().nodeScoreCutoff}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            K-Core: {selectedResult.parameters.kCore}
+            K-Core: {selectedResult.algorithm.getParameters().kCore}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Max Depth: {selectedResult.parameters.maxDepthFromStart}
+            Max Depth: {selectedResult.algorithm.getParameters().maxDepthFromStart}
           </Typography>
         </Box>
       )}
@@ -770,14 +811,19 @@ const MCODEPanel = (): JSX.Element => {
             overflowY: 'auto',
           }}
         >
-          {selectedResult?.clusters.map((cluster, i) => (
+          {selectedResult?.clusters.map((cluster) => (
+            // Key by result + seed so switching results remounts the panels
+            // (their uncontrolled size Slider would otherwise keep a stale
+            // value from the same list position in the previous result). The key
+            // stays stable across exploration, since the seed id is preserved.
             <ClusterPanel
-              key={i}
+              key={`${selectedResult.id}-${cluster.rank}`}
               cluster={cluster}
               networkId={selectedResult.networkId}
-              nodeScoreCutoff={selectedResult.parameters.nodeScoreCutoff}
+              nodeScoreCutoff={selectedResult.algorithm.getParameters().nodeScoreCutoff}
               selected={selectedCluster === cluster}
               onClick={handleClusterClick}
+              onExplore={handleExploreCluster}
             />
           ))}
         </Box>

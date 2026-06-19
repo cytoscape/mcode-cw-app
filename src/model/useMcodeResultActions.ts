@@ -70,7 +70,8 @@ export function useMcodeResultActions(
 
   const exportResult = useCallback(() => {
     if (!selectedResult) return
-    const { networkId, parameters, clusters, name } = selectedResult
+    const { networkId, algorithm, clusters, name } = selectedResult
+    const parameters = algorithm.getParameters()
 
     // Resolve a node's display name from the source network ("name" column),
     // falling back to the raw node id when no name attribute is present.

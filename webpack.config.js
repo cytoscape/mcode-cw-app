@@ -27,7 +27,13 @@ export default (env) => ({
     minimize: false,
     runtimeChunk: false,
     splitChunks: {
-      chunks: 'async',
+      // Split shared modules out of async chunks (the default), but NEVER out of
+      // the web worker chunk. The worker is loaded via a cross-origin blob that
+      // importScripts() it; inside that blob worker `self.location` is the host
+      // origin, so webpack's auto publicPath can't fetch sibling chunks from the
+      // remote's origin. Keeping the worker self-contained avoids that entirely.
+      // The 'mcode-worker' name is set in src/model/useMcodeWorker.ts.
+      chunks: (chunk) => chunk.name !== 'mcode-worker' && !chunk.canBeInitial(),
       name: false,
     },
   },
