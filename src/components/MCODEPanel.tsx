@@ -1,12 +1,16 @@
 import AddIcon from '@mui/icons-material/Add'
 import CheckIcon from '@mui/icons-material/Check'
 import DeleteIcon from '@mui/icons-material/Delete'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import InfoIcon from '@mui/icons-material/Info'
 import MenuIcon from '@mui/icons-material/Menu'
 import PaletteIcon from '@mui/icons-material/Palette'
 import { useEffect, useRef, useState } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   CircularProgress,
@@ -21,9 +25,16 @@ import {
   MenuItem,
   Select,
   Slider,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Tooltip,
   Typography
 } from '@mui/material'
+import { SelectChangeEvent } from '@mui/material/Select';
 import cytoscape from 'cytoscape'
 
 import { useCyWebEvent } from 'cyweb/EventBus'
@@ -463,6 +474,159 @@ const ClusterPanel = ({
   )
 }
 
+const ExplorePanel = ({
+  cluster,
+  networkId,
+}: {
+  cluster: MCODECluster
+  networkId: string
+}): JSX.Element => {
+  const [attributes, setAttributes] = useState<string[]>([])
+  const [selectedAttribute, setSelectedAttribute] = useState<string>('')
+  const [enumerations, setEnumerations] = useState<Map<string | number, number>>(new Map())
+
+  const tableApi = useTableApi()  
+
+  // Get the names of all node-table columns in the network,
+  // and set the first one as the default selection if none is selected.
+  const updateAttributes = () => {
+    const table = tableApi.getTable(networkId, 'node')
+    if (!table.success) {
+      console.warn('Failed to read node table columns:', table.error.message)
+      setAttributes([])
+      return
+    }
+    
+    const names = table.data.columns
+      .map((column) => column.name)
+      .filter((value, index, self) => self.indexOf(value) === index) // unique names
+    names.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+
+    setAttributes(names)
+    // set the first attribute as the default selection if none is selected
+    if (!selectedAttribute && names.length > 0) {
+      setSelectedAttribute(names[0])
+    }
+  }
+
+  // Count how many times each value of the selected attribute appears across the
+  // cluster's nodes. List-valued attributes (e.g. "MCODE::Clusters (n)") count each element.
+  const updateEnumerations = () => {
+    let counts = new Map<any, number>()
+
+    if (selectedAttribute) {
+      for (const nodeId of cluster.nodes) {
+        const result = tableApi.getValue(networkId, 'node', nodeId, selectedAttribute)
+        if (!result.success) continue
+
+        const raw = result.data.value
+        if (raw === null || raw === undefined) continue
+
+        // A list value contributes each of its elements; a scalar contributes once.
+        const values = Array.isArray(raw) ? raw : [raw]
+        for (const element of values) {
+          if (element === null || element === undefined) continue
+          // Keep numbers as numbers, everything else as its string form.
+          const key = typeof element === 'number' ? element : String(element)
+          counts.set(key, (counts.get(key) ?? 0) + 1)
+        }
+        // Sort the map by key ascending (string order for strings, numeric order for numbers).
+        counts = new Map([...counts.entries()].sort((a, b) => {
+          if (typeof a[0] === 'number' && typeof b[0] === 'number') {
+            return a[0] - b[0]
+          }
+          return String(a[0]).localeCompare(String(b[0]))
+        }))
+      }
+    }
+
+    setEnumerations(counts)
+  }
+
+  useEffect(() => {
+    updateAttributes()
+  }, [networkId])
+
+  useEffect(() => {
+    updateEnumerations()
+  }, [selectedAttribute, cluster, networkId])
+
+  const handleOnChange = (event: SelectChangeEvent<typeof selectedAttribute>) => {
+    setSelectedAttribute(event.target.value)
+  }
+
+  return (
+    <Box>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          p: 1,
+          gap: 1,
+        }}
+      >
+        <Typography variant="body1">Node Attribute:</Typography>
+        <Select
+          value={selectedAttribute}
+          disabled={attributes.length === 0}
+          size="small"
+          onChange={handleOnChange}
+          sx={{
+            flexGrow: 1,
+            minWidth: 120,
+          }}
+        >
+          {attributes.map((attr) => (
+            <MenuItem key={attr} value={attr}>
+              {attr}
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
+      <TableContainer
+        sx={{
+          maxHeight: 240,
+          border: (theme) => `1px solid ${theme.palette.divider}`,
+          borderRadius: 1,
+        }}
+      >
+        <Table stickyHeader size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell
+                key="value"
+                align="left"
+              >
+                Value
+              </TableCell>
+              <TableCell
+                key="occurrence"
+                align="left"
+                width={120}
+                sx={{ borderLeft: (theme) => `1px solid ${theme.palette.divider}` }}
+              >
+                Occurrence
+              </TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+          {Array.from(enumerations.entries()).map(([val, count], idx) => (
+            <TableRow key={`${cluster.rank}-${selectedAttribute}-${val}`}>
+              <TableCell align={typeof val === 'number' ? 'right' : 'left'}>
+                {val}
+              </TableCell>
+              <TableCell align="right" sx={{ borderLeft: (theme) => `1px solid ${theme.palette.divider}` }}>
+                {count}
+              </TableCell>
+            </TableRow>
+          ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  )
+}
+
 const MCODEPanel = (): JSX.Element => {
   const workspaceApi = useWorkspaceApi()
   const elementApi = useElementApi()
@@ -827,6 +991,38 @@ const MCODEPanel = (): JSX.Element => {
             />
           ))}
         </Box>
+      {selectedResult && selectedCluster && (
+        <Accordion
+          data-testid="layout-tools-accordion"
+          sx={{
+            backgroundImage: 'none',
+            boxShadow: 'none',
+          }}
+        >
+          <AccordionSummary
+            expandIcon={<ExpandLessIcon />}
+            aria-controls="manual-layout"
+            sx={{
+              minHeight: '40px', // collapsed summary height
+              '&.Mui-expanded': {
+                minHeight: '40px', // expanded summary height
+                borderTop: (theme) => `1px solid ${theme.palette.divider}`,
+              },
+              '.MuiAccordionSummary-content': {
+                marginTop: '12px !important',
+              },
+              '& .MuiAccordionSummary-expandIconWrapper': {
+                color: (theme) => theme.palette.text.secondary,
+              },
+            }}
+          >
+            <Typography>Explore: Cluster {selectedCluster.rank}</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <ExplorePanel cluster={selectedCluster} networkId={selectedResult.networkId} />
+          </AccordionDetails>
+        </Accordion>
+      )}
       </Box>
     {currentNetworkId && (
       <NewAnalysisDialog
