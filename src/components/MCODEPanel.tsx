@@ -503,8 +503,9 @@ const ExplorePanel = ({
     names.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
 
     setAttributes(names)
+    
     // set the first attribute as the default selection if none is selected
-    if (!selectedAttribute && names.length > 0) {
+    if ((!selectedAttribute || selectedAttribute === '') && names.length > 0) {
       setSelectedAttribute(names[0])
     }
   }
@@ -512,9 +513,9 @@ const ExplorePanel = ({
   // Count how many times each value of the selected attribute appears across the
   // cluster's nodes. List-valued attributes (e.g. "MCODE::Clusters (n)") count each element.
   const updateEnumerations = () => {
-    let counts = new Map<any, number>()
+    let counts = new Map<string | number, number>()
 
-    if (selectedAttribute) {
+    if (selectedAttribute && selectedAttribute !== '') {
       for (const nodeId of cluster.nodes) {
         const result = tableApi.getValue(networkId, 'node', nodeId, selectedAttribute)
         if (!result.success) continue
@@ -551,6 +552,25 @@ const ExplorePanel = ({
     updateEnumerations()
   }, [selectedAttribute, cluster, networkId])
 
+  // The node table of this network changed. 'data:changed' can't tell a column
+  // schema change from a row-value change (creating a column in the Cytoscape
+  // Web UI writes default values, so rowIds is non-empty either way), so refresh
+  // both the attribute list and the enumerations.
+  useCyWebEvent('data:changed', ({ networkId: changedNetworkId, tableType }) => {
+    if (tableType !== 'node' || changedNetworkId !== networkId) return
+
+    // If the selected attribute's column was removed, clear the selection first
+    // (its effect recomputes the now-empty enumerations).
+    if (selectedAttribute && selectedAttribute !== '') {
+      const table = tableApi.getTable(networkId, 'node')
+      const stillExists = table.success && table.data.columns.some((column) => column.name === selectedAttribute)
+      if (!stillExists) setSelectedAttribute('')
+    }
+
+    updateAttributes()
+    updateEnumerations()
+  })
+
   const handleOnChange = (event: SelectChangeEvent<typeof selectedAttribute>) => {
     setSelectedAttribute(event.target.value)
   }
@@ -570,6 +590,8 @@ const ExplorePanel = ({
           value={selectedAttribute}
           disabled={attributes.length === 0}
           size="small"
+          displayEmpty
+          renderValue={() => !selectedAttribute || selectedAttribute === '' ? '-- Select an attribute --' : selectedAttribute}
           onChange={handleOnChange}
           sx={{
             flexGrow: 1,
