@@ -1,9 +1,20 @@
 import path from 'path'
 import url from 'url'
-import webpack from 'webpack'
+import mfPlugin from '@module-federation/enhanced/webpack'
 import packageJson from './package.json' with { type: 'json' }
 
-const { ModuleFederationPlugin } = webpack.container
+// Use @module-federation/enhanced (NOT webpack's built-in
+// webpack.container.ModuleFederationPlugin). For an ESM remote that *consumes*
+// another remote (cyweb), the built-in plugin emits a static
+// `import … from "cyweb@<url>"`, which the browser's ESM loader rejects
+// ("Failed to resolve module specifier"). The enhanced plugin loads remotes via
+// @module-federation/runtime — the same runtime the cyweb (Vite) host uses — so
+// no bare `name@url` specifier is emitted.
+//
+// The plugin package is CommonJS while this config is an ES module, so import
+// the default export and destructure (the named CJS export is not reliably
+// reachable via `import { ModuleFederationPlugin }`).
+const { ModuleFederationPlugin } = mfPlugin
 
 // Extract some properties from the package.json file to avoid duplication
 const deps = packageJson.peerDependencies
@@ -15,12 +26,23 @@ const __dirname = path.dirname(__filename)
 const DEV_SERVER_PORT = 5555
 
 // Host remote URL — switches between local dev and production.
-const CYWEB_NAME = 'cyweb'
-const LOCAL_CYWEB = `${CYWEB_NAME}@http://localhost:5500/remoteEntry.js`
-const PROD_CYWEB = `${CYWEB_NAME}@https://web.cytoscape.org/remoteEntry.js`
+//
+// NOTE: a plain URL, NOT the classic `cyweb@<url>` syntax. The `name@url` form
+// only works for the `script` remote type; with ESM output (remoteType
+// 'module') webpack uses the whole string as a static `import` specifier, and
+// `cyweb@http://…` is not a valid module specifier ("Failed to resolve module
+// specifier"). The remote's name comes from the `remotes` key (`cyweb`) below.
+const LOCAL_CYWEB = 'http://localhost:5500/remoteEntry.js'
+const PROD_CYWEB = 'https://web.cytoscape.org/remoteEntry.js'
 
-export default (env) => ({
-  mode: env?.production ? 'production' : 'development',
+export default (env) => {
+  // webpack-cli passes `--env production=false` as the STRING "false", which is
+  // truthy — so guard against it explicitly rather than testing `env.production`.
+  const isProduction =
+    env?.production === true || env?.production === 'true'
+
+  return {
+  mode: isProduction ? 'production' : 'development',
   devtool: false,
   target: 'web',
   optimization: {
@@ -38,10 +60,27 @@ export default (env) => ({
     },
   },
   entry: './src/index.ts',
+  // Emit an ES module remote. The cyweb host loads every remote via
+  // `import()` (registerRemotes with `type: 'module'`), so the container and
+  // its chunks must be ESM, not the classic `var mcode` global.
+  experiments: { outputModule: true },
   output: {
     clean: true,
     path: path.resolve(__dirname, 'dist'),
-    publicPath: 'auto',
+    // In dev, webpack-dev-server injects an `import.meta.url`-based auto
+    // publicPath snippet into EVERY chunk — including the worker chunk. The
+    // MCODE worker runs as a CLASSIC worker via importScripts() (see
+    // useMcodeWorker.ts), and `import.meta` is a syntax error in a classic
+    // worker, so importScripts fails to compile it (surfaces as a NetworkError
+    // "failed to load"). An explicit publicPath disables that snippet. Prod
+    // builds have no dev server and don't inject it, so 'auto' stays there to
+    // keep the deployed remote location-agnostic.
+    publicPath: isProduction ? 'auto' : `http://localhost:${DEV_SERVER_PORT}/`,
+    module: true,
+    // The MCODE web worker is loaded as a classic cross-origin blob that
+    // importScripts() its chunk (see src/model/useMcodeWorker.ts); module
+    // workers can't use importScripts(), so pin worker chunks to classic.
+    workerChunkLoading: 'import-scripts',
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
@@ -50,8 +89,14 @@ export default (env) => ({
     new ModuleFederationPlugin({
       name: 'mcode', // unique camelCase app name.
       filename: 'remoteEntry.js',
+      // Emit the federation container as an ES module so the host can import()
+      // it. Requires output.module / experiments.outputModule above.
+      library: { type: 'module' },
+      // Load the cyweb remote as a native ES module (matches the host's ESM
+      // container and the plain-URL remote entries above).
+      remoteType: 'module',
       remotes: {
-        cyweb: env?.production ? PROD_CYWEB : LOCAL_CYWEB,
+        cyweb: isProduction ? PROD_CYWEB : LOCAL_CYWEB,
       },
       exposes: {
         './AppConfig': './src/index.ts',
@@ -90,4 +135,5 @@ export default (env) => ({
       'Access-Control-Allow-Origin': '*', // allow access from any origin
     },
   },
-})
+  }
+}
