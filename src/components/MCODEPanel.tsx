@@ -489,15 +489,16 @@ const ExplorePanel = ({
 
   // Get the names of all node-table columns in the network,
   // and set the first one as the default selection if none is selected.
-  const updateAttributes = () => {
+  const updateAttributes = (): string[] => {
+    let names: string[] = []
     const table = tableApi.getTable(networkId, 'node')
     if (!table.success) {
       console.warn('Failed to read node table columns:', table.error.message)
-      setAttributes([])
-      return
+      setAttributes(names)
+      return names
     }
     
-    const names = table.data.columns
+    names = table.data.columns
       .map((column) => column.name)
       .filter((value, index, self) => self.indexOf(value) === index) // unique names
     names.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
@@ -508,6 +509,8 @@ const ExplorePanel = ({
     if ((!selectedAttribute || selectedAttribute === '') && names.length > 0) {
       setSelectedAttribute(names[0])
     }
+
+    return names
   }
 
   // Count how many times each value of the selected attribute appears across the
@@ -559,15 +562,17 @@ const ExplorePanel = ({
   useCyWebEvent('data:changed', ({ networkId: changedNetworkId, tableType }) => {
     if (tableType !== 'node' || changedNetworkId !== networkId) return
 
-    // If the selected attribute's column was removed, clear the selection first
-    // (its effect recomputes the now-empty enumerations).
+    // Check whether the selected attribute's column was removed
+    let stillExists = true
     if (selectedAttribute && selectedAttribute !== '') {
       const table = tableApi.getTable(networkId, 'node')
-      const stillExists = table.success && table.data.columns.some((column) => column.name === selectedAttribute)
-      if (!stillExists) setSelectedAttribute('')
+      stillExists = table.success && table.data.columns.some((column) => column.name === selectedAttribute)
     }
 
-    updateAttributes()
+    const newAttributes = updateAttributes()
+    // If the selected attribute was removed, select the first attribute in the new list (or empty string if none).
+    if (!stillExists) setSelectedAttribute(newAttributes.length > 0 ? newAttributes[0] : '')
+    
     updateEnumerations()
   })
 
@@ -778,6 +783,7 @@ const MCODEPanel = (): JSX.Element => {
     }
     setResults((prev) => [...prev, newResult])
     setSelectedResult(newResult)
+    setSelectedCluster(null)
     console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
 
     // 5. Add the MCODE result columns to the source network's node table:
