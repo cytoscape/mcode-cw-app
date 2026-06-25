@@ -69,10 +69,8 @@ const OptionsMenu = ({
   onDiscardSelectedResult: () => void
   onDiscardAllResults: () => void
 }): JSX.Element => {
-  const { viewSourceNetwork, createClusterNetwork, exportResult } = useMcodeResultActions(
-    selectedResult,
-    selectedCluster,
-  )
+  const { viewSourceNetwork, applyMcodeStyle, createClusterNetwork, exportResult } =
+    useMcodeResultActions(selectedResult, selectedCluster)
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [showParametersResult, setShowParametersResult] = useState(false)
@@ -96,7 +94,7 @@ const OptionsMenu = ({
   }
   const handleApplyMcodeStyle = () => {
     handleOptionsClose()
-    // TODO
+    applyMcodeStyle()
   }
   const handleCreateClusterNetwork = () => {
     handleOptionsClose()
@@ -246,7 +244,7 @@ const OptionsMenu = ({
 
 const ClusterThumbnail = ({
   networkId,
-  cluster
+  cluster,
 }: {
   networkId: string,
   cluster: MCODECluster
@@ -670,12 +668,25 @@ const MCODEPanel = (): JSX.Element => {
   const [selectedCluster, setSelectedCluster] = useState<MCODECluster | null>(null)
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
+  // The "Analyzing network…" state is shown while the MCODE worker is running.
+  // It can be cancelled by the user, which aborts the worker and sets a flag
+  // that the main thread checks at a yield point after the worker finishes.
   const [analyzing, setAnalyzing] = useState(false)
+  // Post-worker phase: committing the result + writing node columns.
+  // Shown as a separate, non-cancellable "Saving results…" state
+  // (the worker is done, so there's nothing left to cancel).
+  const [saving, setSaving] = useState(false)
 
   // Monotonically increasing result id.
   // It never reuses an id, even after results are discarded,
   // so a new result can't collide with a deleted one's leftover node columns.
   const nextResultId = useRef(1)
+
+  // Set by the Cancel button. Covers the whole submit operation, not just the
+  // worker: the worker is aborted via cancelMcode(), but the post-worker
+  // main-thread work (writing node columns, committing the result) is only
+  // cancellable by checking this flag at a yield point — see handleSubmitAnalysis.
+  const analysisCancelled = useRef(false)
 
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
   const { run: runMcode, cancel: cancelMcode } = useMcodeWorker()
@@ -743,63 +754,94 @@ const MCODEPanel = (): JSX.Element => {
     console.debug('Adjacency map:', adjacency)
 
     // 3. Run MCODE in a web worker so a large network doesn't freeze the UI.
-    //    A spinner is shown while `analyzing` is true.
+    //    A spinner is shown while `analyzing` is true. The spinner stays up for
+    //    the *whole* operation (worker + committing the result), so it's cleared
+    //    once at the end in `finally`.
+    analysisCancelled.current = false
     let clusters: MCODECluster[]
     let algorithm: MCODEAlgorithm
     setAnalyzing(true)
     try {
-      ;({ clusters, algorithm } = await runMcode(adjacency, parameters))
-    } catch (err) {
-      // A user cancellation is expected; only warn on genuine failures.
-      if (err instanceof McodeCancelledError) {
-        console.debug('MCODE analysis cancelled')
-      } else {
-        console.warn('MCODE analysis failed:', err)
+      try {
+        ;({ clusters, algorithm } = await runMcode(adjacency, parameters))
+      } catch (err) {
+        // A user cancellation is expected; only warn on genuine failures.
+        if (err instanceof McodeCancelledError) {
+          console.debug('MCODE analysis cancelled')
+        } else {
+          console.warn('MCODE analysis failed:', err)
+        }
+        return
       }
-      return
+
+      // If nothing was found, don't add an empty result; just inform the user.
+      if (clusters.length === 0) {
+        setNoResultsOpen(true)
+        return
+      }
+
+      // The worker is done, but committing the result still does heavy,
+      // un-interruptible main-thread work (writing 3 node columns across every
+      // node, then rendering the cluster thumbnails). Yield once so a Cancel
+      // click queued during the run is delivered, then honor it — otherwise the
+      // spinner would sit through that work with nothing left to cancel.
+      await new Promise((resolve) => setTimeout(resolve))
+      if (analysisCancelled.current) {
+        console.debug('MCODE analysis cancelled')
+        return
+      }
+
+      // The worker is done — switch to the non-cancellable "Saving results…"
+      // phase and let it paint before the heavy synchronous work below.
+      setAnalyzing(false)
+      setSaving(true)
+      await new Promise((resolve) => setTimeout(resolve))
+
+      // 4. Build the result. The name is "{COUNT} - {network name}" where COUNT
+      //    is the new result's position in the results array (1-based, i.e. the
+      //    last index once it is appended).
+      const summary = workspaceApi.getNetworkSummary(currentNetworkId)
+      const networkName = summary.success ? summary.data.name : currentNetworkId
+      const id = nextResultId.current
+      nextResultId.current += 1
+      const newResult: MCODEResult = {
+        id,
+        name: `${id} - ${networkName}`,
+        networkId: currentNetworkId,
+        algorithm,
+        clusters,
+      }
+      setResults((prev) => [...prev, newResult])
+      setSelectedResult(newResult)
+      setSelectedCluster(null)
+      console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
+
+      // 5. Add the MCODE result columns to the source network's node table:
+      //    "MCODE::Score (n)", "MCODE::Node Status (n)", "MCODE::Clusters (n)".
+      const { columns, rows } = buildMcodeNodeTableData(id, clusters, algorithm.getScores())
+      for (const col of columns) {
+        const created = tableApi.createColumn(currentNetworkId, 'node', col.name, col.type, col.defaultValue)
+        if (!created.success) {
+          console.warn(`Failed to create node column "${col.name}":`, created.error.message)
+        }
+      }
+      console.debug('Writing MCODE node column values...', rows)
+      const edited = tableApi.editRows(currentNetworkId, 'node', rows)
+      if (!edited.success) {
+        console.warn('Failed to write MCODE node column values:', edited.error.message)
+      }
     } finally {
       setAnalyzing(false)
+      setSaving(false)
     }
+  }
 
-    // If nothing was found, don't add an empty result; just inform the user.
-    if (clusters.length === 0) {
-      setNoResultsOpen(true)
-      return
-    }
-
-    // 4. Build the result. The name is "{COUNT} - {network name}" where COUNT
-    //    is the new result's position in the results array (1-based, i.e. the
-    //    last index once it is appended).
-    const summary = workspaceApi.getNetworkSummary(currentNetworkId)
-    const networkName = summary.success ? summary.data.name : currentNetworkId
-    const id = nextResultId.current
-    nextResultId.current += 1
-    const newResult: MCODEResult = {
-      id,
-      name: `${id} - ${networkName}`,
-      networkId: currentNetworkId,
-      algorithm,
-      clusters,
-    }
-    setResults((prev) => [...prev, newResult])
-    setSelectedResult(newResult)
-    setSelectedCluster(null)
-    console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
-
-    // 5. Add the MCODE result columns to the source network's node table:
-    //    "MCODE::Score (n)", "MCODE::Node Status (n)", "MCODE::Clusters (n)".
-    const { columns, rows } = buildMcodeNodeTableData(id, clusters, algorithm.getScores())
-    for (const col of columns) {
-      const created = tableApi.createColumn(currentNetworkId, 'node', col.name, col.type, col.defaultValue)
-      if (!created.success) {
-        console.warn(`Failed to create node column "${col.name}":`, created.error.message)
-      }
-    }
-    console.debug('Writing MCODE node column values...', rows)
-    const edited = tableApi.editRows(currentNetworkId, 'node', rows)
-    if (!edited.success) {
-      console.warn('Failed to write MCODE node column values:', edited.error.message)
-    }
+  // Cancel the whole analysis: abort the worker if it's still running, and flag
+  // the operation so the post-worker commit step (if the worker already
+  // finished) is skipped at its yield checkpoint.
+  const handleCancelAnalysis = (): void => {
+    analysisCancelled.current = true
+    cancelMcode()
   }
 
   const handleClusterClick = (cluster: MCODECluster): void => {
@@ -939,7 +981,7 @@ const MCODEPanel = (): JSX.Element => {
             <span>
               <Button
                 variant="contained"
-                disabled={!currentNetworkId || analyzing}
+                disabled={!currentNetworkId || analyzing || saving}
                 onClick={handleNewAnalysisClick}
                 sx={{
                   minWidth: 24,
@@ -1060,16 +1102,19 @@ const MCODEPanel = (): JSX.Element => {
         onSubmit={handleSubmitAnalysis}
       />
     )}
-    <Dialog open={analyzing}>
+    <Dialog open={analyzing || saving}>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
         <CircularProgress color="inherit" />
-        <Typography>Analyzing network…</Typography>
+        <Typography>{saving ? 'Saving results…' : 'Analyzing network…'}</Typography>
       </DialogContent>
-      <DialogActions>
-        <Button variant="outlined" color="error" onClick={cancelMcode}>
-          Cancel
-        </Button>
-      </DialogActions>
+      {/* Cancel only while the worker runs; the saving phase isn't cancellable. */}
+      {analyzing && (
+        <DialogActions>
+          <Button variant="outlined" color="error" onClick={handleCancelAnalysis}>
+            Cancel
+          </Button>
+        </DialogActions>
+      )}
     </Dialog>
     <Dialog open={noResultsOpen} onClose={() => setNoResultsOpen(false)}>
       <DialogTitle>No Results</DialogTitle>

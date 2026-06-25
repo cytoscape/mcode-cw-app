@@ -1,7 +1,7 @@
 /**
  * Actions the user can run against a selected MCODE result / cluster from the
- * options menu: view the source network, create a cluster subnetwork, and
- * export the result to a text file.
+ * options menu: view the source network, apply the MCODE visual style, create a
+ * cluster subnetwork, and export the result to a text file.
  *
  * These handlers are stateful (they consume Cytoscape Web API hooks), so they
  * live in a custom hook rather than a plain utility module. The pure data
@@ -9,18 +9,21 @@
  */
 import { useCallback } from 'react'
 
-import type { Cx2 } from '@cytoscape-web/api-types'
+import type { ApiResult, Cx2 } from '@cytoscape-web/api-types'
 import { useElementApi } from 'cyweb/ElementApi'
 import { useExportApi } from 'cyweb/ExportApi'
 import { useNetworkApi } from 'cyweb/NetworkApi'
+import { useVisualStyleApi } from 'cyweb/VisualStyleApi'
 import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 
-import { buildMcodeResultsText, ClusterExportRow, sliceClusterCx2 } from './mcodeExport'
+import { buildMcodeResultsText, ClusterExportRow, mcodeColumnName, sliceClusterCx2 } from './mcodeExport'
 import { MCODECluster, MCODEResult } from './mcodeTypes'
 
 export interface McodeResultActions {
   /** Make the result's source network the active/shown one. */
   viewSourceNetwork: () => void
+  /** Apply the MCODE visual style to the result's source network. */
+  applyMcodeStyle: () => void
   /** Create a new subnetwork from the selected cluster. */
   createClusterNetwork: () => void
   /** Download the selected result as a tab-delimited .txt report. */
@@ -35,6 +38,7 @@ export function useMcodeResultActions(
   const networkApi = useNetworkApi()
   const exportApi = useExportApi()
   const elementApi = useElementApi()
+  const visualStyleApi = useVisualStyleApi()
 
   const viewSourceNetwork = useCallback(() => {
     if (!selectedResult) return
@@ -43,6 +47,51 @@ export function useMcodeResultActions(
       console.warn('Failed to switch to source network:', res.error.message)
     }
   }, [selectedResult, workspaceApi])
+
+  const applyMcodeStyle = useCallback(() => {
+    if (!selectedResult) return
+    const { networkId, id, algorithm } = selectedResult
+
+    const statusColumn = mcodeColumnName('Node Status', id)
+    const scoreColumn = mcodeColumnName('Score', id)
+    const scores = Object.values(algorithm.getScores())
+    const maxScore = scores.length > 0 ? Math.max(...scores) : 0
+
+    const warnOnFail = (label: string, result: ApiResult): void => {
+      if (!result.success) console.warn(`MCODE style: failed to ${label}:`, result.error.message)
+    }
+
+    // NOTE: the Cytoscape Web VisualStyleApi mapping creators don't accept explicit value tables, so
+    // the exact pairings from the desktop style (Seed -> rectangle, score -> white/black/red gradient, etc.)
+    // can't be specified here — cyweb assigns the concrete mapping values.
+    // We translate the property keys, the default, and the mapping structure (which column drives which visual property).
+
+    // Default node color: white.
+    warnOnFail(
+      'set default node color',
+      visualStyleApi.setDefault(networkId, 'nodeBackgroundColor', '#ffffff'),
+    )
+
+    // Node shape mapped from the node-status column ("Seed" / "Clustered" / "Unclustered").
+    warnOnFail(
+      'map node shape',
+      visualStyleApi.createDiscreteMapping(networkId, 'nodeShape', statusColumn, 'string'),
+    )
+
+    // Node fill color mapped continuously from the node-score column
+    // (the lower the score the darker the color).
+    warnOnFail(
+      'map node color',
+      visualStyleApi.createContinuousMapping(
+        networkId,
+        'nodeBackgroundColor',
+        'color',
+        scoreColumn,
+        [0, maxScore],
+        'double',
+      ),
+    )
+  }, [selectedResult, visualStyleApi])
 
   const createClusterNetwork = useCallback(() => {
     if (!selectedResult || !selectedCluster) return
@@ -125,5 +174,5 @@ export function useMcodeResultActions(
     URL.revokeObjectURL(url)
   }, [selectedResult, elementApi, workspaceApi])
 
-  return { viewSourceNetwork, createClusterNetwork, exportResult }
+  return { viewSourceNetwork, applyMcodeStyle, createClusterNetwork, exportResult }
 }

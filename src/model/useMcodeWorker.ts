@@ -6,6 +6,33 @@
  * The worker is created lazily on first use and terminated when the consuming
  * component unmounts. Only one analysis may be in flight at a time (the caller
  * is expected to guard the UI accordingly); a second concurrent `run()` rejects.
+ *
+ * ── Why a Web Worker? ───────────────────────────────────────────────────────
+ * MCODE clustering is heavy, synchronous, CPU-bound work (per-node k-core /
+ * density scoring, then cluster finding) with nothing to await — it just
+ * occupies the thread until it finishes. JavaScript is single-threaded, and the
+ * main thread is shared with rendering and input, so running it inline freezes
+ * the UI for the whole duration.
+ *
+ * That's especially bad here because this app is a Module Federation remote
+ * embedded in Cytoscape Web: a blocked main thread freezes the *host* app, not
+ * just our panel. Offloading to a worker keeps the main thread free, which buys:
+ *   - no freeze: large networks take seconds, but the UI stays live;
+ *   - a real progress spinner and a working Cancel button (we just terminate()
+ *     the worker — you can't reliably cancel synchronous main-thread work).
+ *
+ * It's a clean fit because the algorithm is pure: it operates on a plain
+ * adjacency map with no DOM / React / cyweb dependencies, so the worker bundle
+ * contains only the algorithm.
+ *
+ * Trade-offs we accept: inputs/outputs cross by structured-clone copy via
+ * postMessage (fine — they're plain/cloneable), and because the algorithm
+ * instance lives in the worker, its scored state is returned as a serializable
+ * snapshot and rehydrated on the main thread (see MCODEAlgorithm.toSnapshot /
+ * fromSnapshot) so features like cluster exploration can reuse it without
+ * rescoring. If analyses were always tiny this would be over-engineering, but
+ * real MCODE runs block long enough — and freezing the host raises the stakes —
+ * to make it worth the message-passing overhead.
  */
 import { useCallback, useEffect, useRef } from 'react'
 
