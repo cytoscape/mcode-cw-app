@@ -92,6 +92,12 @@ export interface MCODECluster {
   /** The node positions, after the cluster thumbnail is generated. */
   nodePositions?: Record<string, { x: number; y: number }>
   /**
+   * Cached thumbnail (PNG data URI), generated lazily the first time the cluster
+   * is shown. Reused when the result is re-selected; cleared implicitly when the
+   * cluster is re-grown (exploration produces a new cluster object).
+   */
+  thumbnail?: string
+  /**
    * Snapshot of the node ids already consumed by higher-ranked clusters when
    * this cluster was seeded. Used by MCODEAlgorithm.exploreCluster() to keep
    * those clusters' priority when shrinking. Internal to the algorithm.

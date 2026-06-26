@@ -6,7 +6,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import InfoIcon from '@mui/icons-material/Info'
 import MenuIcon from '@mui/icons-material/Menu'
 import PaletteIcon from '@mui/icons-material/Palette'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Accordion,
   AccordionDetails,
@@ -50,6 +50,10 @@ import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { useMcodeResultActions } from '../model/useMcodeResultActions'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
 import { NewAnalysisDialog } from './NewAnalysisDialog'
+
+
+/** A source-network edge, reduced to what cluster thumbnails need. */
+type NetworkEdge = { id: string; source: string; target: string }
 
 
 const OptionsMenu = ({
@@ -242,41 +246,37 @@ const OptionsMenu = ({
   )
 }
 
-const ClusterThumbnail = ({
-  networkId,
+const ClusterThumbnail = memo(({
   cluster,
+  edges,
 }: {
-  networkId: string,
   cluster: MCODECluster
+  /** All source-network edges, fetched once per network by the parent. */
+  edges: NetworkEdge[]
 }): JSX.Element => {
-  const [image, setImage] = useState<string | null>(null)
-  const elementApi = useElementApi()
+  // Seed from the cached thumbnail so a re-selected result shows it instantly.
+  const [image, setImage] = useState<string | null>(cluster.thumbnail ?? null)
+  console.log('==>> ClusterThumbnail render', cluster.thumbnail)
 
-  // Create an offscreen canvas to draw the cluster thumbnail and get the exported PNG.
-  // (get the actual nodes ans edges from the network from the node IDs provided by the cluster)
   useEffect(() => {
+    // Reuse the cached thumbnail if this cluster already has one. It survives
+    // result switches (clusters live in component state); exploration makes a
+    // new cluster object with no thumbnail, so that one regenerates.
+    if (cluster.thumbnail) {
+      setImage(cluster.thumbnail)
+      return
+    }
     if (cluster.nodes.length === 0) {
       setImage(null)
       return
     }
 
-    // Collect every edge whose endpoints are both in the cluster. We iterate the
-    // network's edges by id (rather than using getConnectedNodes, which yields
-    // one neighbor per pair) so that parallel edges between the same pair of
-    // nodes are all kept, each with its own id.
+    // Keep only the edges whose endpoints are both in the cluster — filtered in
+    // memory from the network's pre-fetched edge list (no API calls here).
     const clusterNodes = new Set(cluster.nodes)
-    const clusterEdges: { id: string; source: string; target: string }[] = []
-    const edgeIdsResult = elementApi.getEdgeIds(networkId)
-    if (edgeIdsResult.success) {
-      for (const edgeId of edgeIdsResult.data.edgeIds) {
-        const edge = elementApi.getEdge(networkId, edgeId)
-        if (!edge.success) continue
-        const { sourceId, targetId } = edge.data
-        if (clusterNodes.has(sourceId) && clusterNodes.has(targetId)) {
-          clusterEdges.push({ id: edgeId, source: sourceId, target: targetId })
-        }
-      }
-    }
+    const clusterEdges = edges.filter(
+      (e) => clusterNodes.has(e.source) && clusterNodes.has(e.target),
+    )
 
     const elements: cytoscape.ElementDefinition[] = [
       ...cluster.nodes.map((id) => ({ data: { id, 'Node Status': cluster.seedId === id ? 'Seed' : 'Clustered' } })),
@@ -325,21 +325,20 @@ const ClusterThumbnail = ({
     // viewport zoom/pan. Returns a base64 PNG data URI usable as an <img> src.
     const png = cy.png({ full: true, bg: '#ffffff', scale: 2 })
 
-    // Save the node positions back to the cluster for later use (e.g. when creating a network from the cluster).
+    // Cache the node positions and the generated image on the cluster so that
+    // re-selecting this result reuses them instead of recomputing the layout.
     const nodePositions: Record<string, { x: number; y: number }> = {}
     cy.nodes().forEach((n) => {
       const pos = n.position()
       nodePositions[n.id()] = { x: pos.x, y: pos.y }
     })
     cluster.nodePositions = nodePositions
+    cluster.thumbnail = png
 
     cy.destroy()
     document.body.removeChild(container)
     setImage(png)
-    // elementApi is intentionally omitted: it may be a fresh reference each
-    // render, and the thumbnail only needs to rebuild when the inputs change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [networkId, cluster])
+  }, [cluster, edges])
 
   return (
     <Box
@@ -355,30 +354,30 @@ const ClusterThumbnail = ({
       }}
     >
       {image ? (
-        <img
+        <Box
+          component="img"
           src={image}
           alt="Cluster Thumbnail"
-          style={{ maxWidth: '100%', maxHeight: '100%' }}
+          sx={{ maxWidth: '100%', maxHeight: '100%' }}
         />
       ) : (
-        <Typography variant="caption" color="text.secondary">
-          Loading...
-        </Typography>
+        <CircularProgress size={24} sx={{ color: 'text.disabled' }} />
       )}
     </Box>
   )
-}
+})
+ClusterThumbnail.displayName = 'ClusterThumbnail'
 
-const ClusterPanel = ({
+const ClusterPanel = memo(({
   cluster,
-  networkId,
+  edges,
   nodeScoreCutoff,
   selected,
   onClick,
   onExplore,
 }: {
   cluster: MCODECluster
-  networkId: string
+  edges: NetworkEdge[]
   nodeScoreCutoff: number
   selected: boolean
   onClick: (cluster: MCODECluster) => void
@@ -436,7 +435,7 @@ const ClusterPanel = ({
           {cluster.rank}
         </Typography>
         <Box>
-          <ClusterThumbnail networkId={networkId} cluster={cluster} />
+          <ClusterThumbnail cluster={cluster} edges={edges} />
         </Box>
         <Box sx={{ flexGrow: 1 }}>
           <Typography variant="body2" color="text.secondary" sx={{ width: '100%', textAlign: 'right' }}>
@@ -470,7 +469,8 @@ const ClusterPanel = ({
       </Box>
     </Box>
   )
-}
+})
+ClusterPanel.displayName = 'ClusterPanel'
 
 const ExplorePanel = ({
   cluster,
@@ -691,6 +691,34 @@ const MCODEPanel = (): JSX.Element => {
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
   const { run: runMcode, cancel: cancelMcode } = useMcodeWorker()
 
+  // Cache of every network's edges ({id, source, target}), so cluster thumbnails
+  // filter an in-memory list instead of each one re-fetching all edges from the
+  // source network. Keyed by network id, so results on the same network share it.
+  const networkEdgesCache = useRef<Map<string, NetworkEdge[]>>(new Map())
+  const getNetworkEdges = (networkId: string): NetworkEdge[] => {
+    const cached = networkEdgesCache.current.get(networkId)
+    if (cached) return cached
+
+    const result: NetworkEdge[] = []
+    const idsResult = elementApi.getEdgeIds(networkId)
+    if (idsResult.success) {
+      for (const edgeId of idsResult.data.edgeIds) {
+        const edge = elementApi.getEdge(networkId, edgeId)
+        if (!edge.success) continue
+        result.push({ id: edgeId, source: edge.data.sourceId, target: edge.data.targetId })
+      }
+    }
+    networkEdgesCache.current.set(networkId, result)
+    return result
+  }
+
+  // The selected result's source-network edges, fetched once per network.
+  const networkEdges = useMemo(
+    () => (selectedResult ? getNetworkEdges(selectedResult.networkId) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedResult?.networkId],
+  )
+
   useCyWebEvent('network:switched', ({ networkId: newId, previousId }) => {
     console.debug(`current network changed: ${previousId || '(none)'} → ${newId}`)
     setCurrentNetworkId(newId)
@@ -827,6 +855,7 @@ const MCODEPanel = (): JSX.Element => {
       }
       console.debug('Writing MCODE node column values...', rows)
       const edited = tableApi.editRows(currentNetworkId, 'node', rows)
+      console.debug('Finished writing MCODE node column values--Success:', edited.success)
       if (!edited.success) {
         console.warn('Failed to write MCODE node column values:', edited.error.message)
       }
@@ -844,47 +873,55 @@ const MCODEPanel = (): JSX.Element => {
     cancelMcode()
   }
 
-  const handleClusterClick = (cluster: MCODECluster): void => {
-    setSelectedCluster(cluster)
+  // useCallback so the identity is stable across unrelated re-renders (spinner
+  // toggles, etc.); this is what lets the memoized ClusterPanels skip re-rendering.
+  const handleClusterClick = useCallback(
+    (cluster: MCODECluster): void => {
+      setSelectedCluster(cluster)
 
-    if (!selectedResult) {
-      console.warn('No selected result')
-      return
-    }
+      if (!selectedResult) {
+        console.warn('No selected result')
+        return
+      }
 
-    const selected = selectionApi.exclusiveSelect(
-      selectedResult.networkId,
-      cluster.nodes,
-      [],
-    )
-    if (!selected.success) {
-      console.warn('Failed to select cluster nodes:', selected.error.message)
-    }
-  }
+      const selected = selectionApi.exclusiveSelect(
+        selectedResult.networkId,
+        cluster.nodes,
+        [],
+      )
+      if (!selected.success) {
+        console.warn('Failed to select cluster nodes:', selected.error.message)
+      }
+    },
+    [selectedResult, selectionApi],
+  )
 
   // Re-grow a cluster at a new node-score cutoff (the size slider) and replace
   // it in the result, immutably, so its thumbnail/score/node count update.
-  const handleExploreCluster = (cluster: MCODECluster, nodeScoreCutoff: number): void => {
-    if (!selectedResult) return
+  const handleExploreCluster = useCallback(
+    (cluster: MCODECluster, nodeScoreCutoff: number): void => {
+      if (!selectedResult) return
 
-    const explored = selectedResult.algorithm.exploreCluster(cluster, nodeScoreCutoff)
-    const updatedResult: MCODEResult = {
-      ...selectedResult,
-      clusters: selectedResult.clusters.map((c) => (c === cluster ? explored : c)),
-    }
-    setResults((prev) => prev.map((r) => (r === selectedResult ? updatedResult : r)))
-    setSelectedResult(updatedResult)
-
-    // If the explored cluster is the selected one, re-select its (now changed)
-    // nodes in the source network so the selection tracks the new cluster.
-    if (selectedCluster === cluster) {
-      setSelectedCluster(explored)
-      const selected = selectionApi.exclusiveSelect(selectedResult.networkId, explored.nodes, [])
-      if (!selected.success) {
-        console.warn('Failed to re-select explored cluster nodes:', selected.error.message)
+      const explored = selectedResult.algorithm.exploreCluster(cluster, nodeScoreCutoff)
+      const updatedResult: MCODEResult = {
+        ...selectedResult,
+        clusters: selectedResult.clusters.map((c) => (c === cluster ? explored : c)),
       }
-    }
-  }
+      setResults((prev) => prev.map((r) => (r === selectedResult ? updatedResult : r)))
+      setSelectedResult(updatedResult)
+
+      // If the explored cluster is the selected one, re-select its (now changed)
+      // nodes in the source network so the selection tracks the new cluster.
+      if (selectedCluster === cluster) {
+        setSelectedCluster(explored)
+        const selected = selectionApi.exclusiveSelect(selectedResult.networkId, explored.nodes, [])
+        if (!selected.success) {
+          console.warn('Failed to re-select explored cluster nodes:', selected.error.message)
+        }
+      }
+    },
+    [selectedResult, selectedCluster, selectionApi],
+  )
 
   const handleShowAnalysisParameters = (show: boolean): void => {
     setShowParametersResult(show)
@@ -1053,7 +1090,7 @@ const MCODEPanel = (): JSX.Element => {
             <ClusterPanel
               key={`${selectedResult.id}-${cluster.rank}`}
               cluster={cluster}
-              networkId={selectedResult.networkId}
+              edges={networkEdges}
               nodeScoreCutoff={selectedResult.algorithm.getParameters().nodeScoreCutoff}
               selected={selectedCluster === cluster}
               onClick={handleClusterClick}
