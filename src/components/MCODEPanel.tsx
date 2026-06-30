@@ -246,31 +246,29 @@ const OptionsMenu = ({
   )
 }
 
-const ClusterThumbnail = memo(({
+const ClusterPanel = memo(({
   cluster,
   edges,
+  algorithm,
+  selected,
+  onClick,
+  onExplore,
 }: {
   cluster: MCODECluster
-  /** All source-network edges, fetched once per network by the parent. */
   edges: NetworkEdge[]
+  algorithm: MCODEAlgorithm
+  selected: boolean
+  onClick: (cluster: MCODECluster) => void
+  onExplore: (cluster: MCODECluster, nodeScoreCutoff: number) => void
 }): JSX.Element => {
   // Seed from the cached thumbnail so a re-selected result shows it instantly.
   const [image, setImage] = useState<string | null>(cluster.thumbnail ?? null)
-  console.log('==>> ClusterThumbnail render', cluster.thumbnail)
+  // Controlled slider value: the cluster's explored cutoff if any, else the
+  // analysis default. Initialized once per mount — the result+seed key on this
+  // component remounts it (re-seeding this state) when the user switches results.
+  const [cutoff, setCutoff] = useState(cluster.nodeScoreCutoff ?? algorithm.getParameters().nodeScoreCutoff)
 
-  useEffect(() => {
-    // Reuse the cached thumbnail if this cluster already has one. It survives
-    // result switches (clusters live in component state); exploration makes a
-    // new cluster object with no thumbnail, so that one regenerates.
-    if (cluster.thumbnail) {
-      setImage(cluster.thumbnail)
-      return
-    }
-    if (cluster.nodes.length === 0) {
-      setImage(null)
-      return
-    }
-
+  const updateImage = () => {
     // Keep only the edges whose endpoints are both in the cluster — filtered in
     // memory from the network's pre-fetched edge list (no API calls here).
     const clusterNodes = new Set(cluster.nodes)
@@ -338,55 +336,7 @@ const ClusterThumbnail = memo(({
     cy.destroy()
     document.body.removeChild(container)
     setImage(png)
-  }, [cluster, edges])
-
-  return (
-    <Box
-      sx={{
-        width: 80,
-        height: 80,
-        bgcolor: '#ffffff',
-        border: (theme) => `1px solid ${theme.palette.divider}`,
-        borderRadius: 1,
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-      }}
-    >
-      {image ? (
-        <Box
-          component="img"
-          src={image}
-          alt="Cluster Thumbnail"
-          sx={{ maxWidth: '100%', maxHeight: '100%' }}
-        />
-      ) : (
-        <CircularProgress size={24} sx={{ color: 'text.disabled' }} />
-      )}
-    </Box>
-  )
-})
-ClusterThumbnail.displayName = 'ClusterThumbnail'
-
-const ClusterPanel = memo(({
-  cluster,
-  edges,
-  nodeScoreCutoff,
-  selected,
-  onClick,
-  onExplore,
-}: {
-  cluster: MCODECluster
-  edges: NetworkEdge[]
-  nodeScoreCutoff: number
-  selected: boolean
-  onClick: (cluster: MCODECluster) => void
-  onExplore: (cluster: MCODECluster, nodeScoreCutoff: number) => void
-}): JSX.Element => {
-  // Controlled slider value: the cluster's explored cutoff if any, else the
-  // analysis default. Initialized once per mount — the result+seed key on this
-  // component remounts it (re-seeding this state) when the user switches results.
-  const [cutoff, setCutoff] = useState(cluster.nodeScoreCutoff ?? nodeScoreCutoff)
+  }
 
   // Track the thumb live while dragging...
   const handleChange = (event: Event, value: number | number[]): void => {
@@ -397,8 +347,34 @@ const ClusterPanel = memo(({
     event: React.SyntheticEvent | Event,
     value: number | number[],
   ): void => {
-    onExplore(cluster, value as number)
+    setImage(null) // clear the thumbnail while the new cluster is computed to show the spinner
+    setTimeout(() => {
+      // Re-grow the cluster at a new node-score cutoff (the size slider) and update the thumbnail.
+      const explored = algorithm.exploreCluster(cluster, cutoff)
+      cluster.seedId = explored.seedId
+      cluster.nodes = explored.nodes
+      cluster.score = explored.score
+      cluster.nodeScoreCutoff = cutoff
+      cluster.nodeSeenSnapshot = explored.nodeSeenSnapshot
+      updateImage()
+      onExplore(cluster, value as number) // Let the parent know the cluster changed so it can re-select its nodes in the source network
+    }, 500) // Give the spinner a chance to render before the CPU hog
   }
+
+  useEffect(() => {
+    // Reuse the cached thumbnail if this cluster already has one. It survives
+    // result switches (clusters live in component state); exploration makes a
+    // new cluster object with no thumbnail, so that one regenerates.
+    if (cluster.thumbnail) {
+      setImage(cluster.thumbnail)
+      return
+    }
+    if (cluster.nodes.length === 0) {
+      setImage(null)
+      return
+    }
+    updateImage()
+  }, [cluster, edges])
 
   return (
     <Box
@@ -434,8 +410,28 @@ const ClusterPanel = memo(({
         >
           {cluster.rank}
         </Typography>
-        <Box>
-          <ClusterThumbnail cluster={cluster} edges={edges} />
+        <Box
+          sx={{
+            width: 80,
+            height: 80,
+            bgcolor: '#ffffff',
+            border: (theme) => `1px solid ${theme.palette.divider}`,
+            borderRadius: 1,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          {image ? (
+            <Box
+              component="img"
+              src={image}
+              alt="Cluster Thumbnail"
+              sx={{ maxWidth: '100%', maxHeight: '100%' }}
+            />
+          ) : (
+            <CircularProgress color="primary" />
+          )}
         </Box>
         <Box sx={{ flexGrow: 1 }}>
           <Typography variant="body2" color="text.secondary" sx={{ width: '100%', textAlign: 'right' }}>
@@ -450,7 +446,7 @@ const ClusterPanel = memo(({
               step={0.01}
               marks={[
                 {
-                  value: nodeScoreCutoff,
+                  value: algorithm.getParameters().nodeScoreCutoff,
                   label: '',
                 },
               ]}
@@ -458,6 +454,8 @@ const ClusterPanel = memo(({
               min={0}
               max={1.0}
               valueLabelDisplay="auto"
+              onClick={(event) => event.stopPropagation()} // Prevent a click on the cluster panel, which would cause the parent component to
+                                                           // select nodes before onChangeCommitted causes another nodes selection asynchronously
               onChange={handleChange}
               onChangeCommitted={handleChangeCommitted}
             />
@@ -873,55 +871,30 @@ const MCODEPanel = (): JSX.Element => {
     cancelMcode()
   }
 
-  // useCallback so the identity is stable across unrelated re-renders (spinner
-  // toggles, etc.); this is what lets the memoized ClusterPanels skip re-rendering.
-  const handleClusterClick = useCallback(
-    (cluster: MCODECluster): void => {
-      setSelectedCluster(cluster)
-
-      if (!selectedResult) {
-        console.warn('No selected result')
-        return
-      }
-
-      const selected = selectionApi.exclusiveSelect(
-        selectedResult.networkId,
-        cluster.nodes,
-        [],
-      )
+  const handleClusterClick = useCallback((cluster: MCODECluster): void => {
+    if (selectedCluster === cluster) {
+      return // already selected, do nothing
+    }
+    setSelectedCluster(cluster)
+    // Re-select the nodes in the source network so the selection tracks the newly selected cluster.
+    if (selectedResult) {
+      const selected = selectionApi.exclusiveSelect(selectedResult.networkId, cluster.nodes, [])
       if (!selected.success) {
         console.warn('Failed to select cluster nodes:', selected.error.message)
       }
-    },
-    [selectedResult, selectionApi],
-  )
+    }
+  }, [selectedResult, selectedCluster, selectionApi])
 
-  // Re-grow a cluster at a new node-score cutoff (the size slider) and replace
-  // it in the result, immutably, so its thumbnail/score/node count update.
-  const handleExploreCluster = useCallback(
-    (cluster: MCODECluster, nodeScoreCutoff: number): void => {
-      if (!selectedResult) return
-
-      const explored = selectedResult.algorithm.exploreCluster(cluster, nodeScoreCutoff)
-      const updatedResult: MCODEResult = {
-        ...selectedResult,
-        clusters: selectedResult.clusters.map((c) => (c === cluster ? explored : c)),
+  const handleExploreCluster = useCallback((cluster: MCODECluster, nodeScoreCutoff: number): void => {
+    setSelectedCluster(cluster)
+    // Re-select the now changed nodes in the source network so the selection tracks the new cluster.
+    if (selectedResult) {
+      const selected = selectionApi.exclusiveSelect(selectedResult.networkId, cluster.nodes, [])
+      if (!selected.success) {
+        console.warn('Failed to re-select explored cluster nodes:', selected.error.message)
       }
-      setResults((prev) => prev.map((r) => (r === selectedResult ? updatedResult : r)))
-      setSelectedResult(updatedResult)
-
-      // If the explored cluster is the selected one, re-select its (now changed)
-      // nodes in the source network so the selection tracks the new cluster.
-      if (selectedCluster === cluster) {
-        setSelectedCluster(explored)
-        const selected = selectionApi.exclusiveSelect(selectedResult.networkId, explored.nodes, [])
-        if (!selected.success) {
-          console.warn('Failed to re-select explored cluster nodes:', selected.error.message)
-        }
-      }
-    },
-    [selectedResult, selectedCluster, selectionApi],
-  )
+    }
+  }, [selectedResult, selectedCluster, selectionApi])
 
   const handleShowAnalysisParameters = (show: boolean): void => {
     setShowParametersResult(show)
@@ -1091,7 +1064,7 @@ const MCODEPanel = (): JSX.Element => {
               key={`${selectedResult.id}-${cluster.rank}`}
               cluster={cluster}
               edges={networkEdges}
-              nodeScoreCutoff={selectedResult.algorithm.getParameters().nodeScoreCutoff}
+              algorithm={selectedResult.algorithm}
               selected={selectedCluster === cluster}
               onClick={handleClusterClick}
               onExplore={handleExploreCluster}
@@ -1141,7 +1114,7 @@ const MCODEPanel = (): JSX.Element => {
     )}
     <Dialog open={analyzing || saving}>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-        <CircularProgress color="inherit" />
+        <CircularProgress color="primary" />
         <Typography>{saving ? 'Saving results…' : 'Analyzing network…'}</Typography>
       </DialogContent>
       {/* Cancel only while the worker runs; the saving phase isn't cancellable. */}
