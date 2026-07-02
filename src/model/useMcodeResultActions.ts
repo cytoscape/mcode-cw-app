@@ -75,7 +75,13 @@ export function useMcodeResultActions(
     // Node shape mapped from the node-status column ("Seed" / "Clustered" / "Unclustered").
     warnOnFail(
       'map node shape',
-      visualStyleApi.createDiscreteMapping(networkId, 'nodeShape', statusColumn, 'string'),
+      visualStyleApi.createDiscreteMapping(
+        networkId,
+        'nodeShape',
+        statusColumn,
+        'string',
+        // { Seed: 'rectangle', Clustered: 'ellipse' },
+      ),
     )
 
     // Node fill color mapped continuously from the node-score column

@@ -35,7 +35,9 @@ import {
   Typography
 } from '@mui/material'
 import { SelectChangeEvent } from '@mui/material/Select';
+
 import cytoscape from 'cytoscape'
+import euler from 'cytoscape-euler'
 
 import { useCyWebEvent } from 'cyweb/EventBus'
 import { useElementApi } from 'cyweb/ElementApi'
@@ -51,6 +53,8 @@ import { useMcodeResultActions } from '../model/useMcodeResultActions'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
 import { NewAnalysisDialog } from './NewAnalysisDialog'
 
+
+cytoscape.use(euler)
 
 /** A source-network edge, reduced to what cluster thumbnails need. */
 type NetworkEdge = { id: string; source: string; target: string }
@@ -299,8 +303,8 @@ const ClusterPanel = memo(({
           selector: 'node',
           style: {
             'background-color': 'rgb(178, 24, 43)',
-            'width': 40,
-            'height': 40,
+            'width': 50,
+            'height': 50,
             'shape': (n) => n.data('Node Status') === 'Seed' ? 'rectangle' : 'ellipse',
           },
         },
@@ -315,8 +319,7 @@ const ClusterPanel = memo(({
           },
         },
       ],
-      // Discrete layout: positions are applied synchronously on run().
-      layout: { name: 'cose', animate: false },
+      layout: { name: 'euler', animate: false, mass: 25 } as cytoscape.LayoutOptions,
     })
 
     // `full: true` exports the entire graph fit to the image, independent of
