@@ -855,7 +855,10 @@ const MCODEPanel = (): JSX.Element => {
         }
       }
       console.debug('Writing MCODE node column values...', rows)
-      const edited = tableApi.editRows(currentNetworkId, 'node', rows)
+      const cellEdits = Object.entries(rows).flatMap(([nodeId, values]) =>
+        Object.entries(values).map(([column, value]) => ({ id: nodeId, column, value })),
+      )
+      const edited = tableApi.setValues(currentNetworkId, 'node', cellEdits)
       console.debug('Finished writing MCODE node column values--Success:', edited.success)
       if (!edited.success) {
         console.warn('Failed to write MCODE node column values:', edited.error.message)
