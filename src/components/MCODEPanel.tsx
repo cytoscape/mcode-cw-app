@@ -59,6 +59,22 @@ cytoscape.use(euler)
 /** A source-network edge, reduced to what cluster thumbnails need. */
 type NetworkEdge = { id: string; source: string; target: string }
 
+/** Clusters larger than this aren't rendered as thumbnails (layout is too slow). */
+const MAX_VISUALIZABLE_CLUSTER_SIZE = 500
+
+/** Whether a cluster is too big to render as a thumbnail image. */
+const isClusterTooLargeToVisualize = (cluster: MCODECluster): boolean =>
+  cluster.nodes.length > MAX_VISUALIZABLE_CLUSTER_SIZE
+
+/**
+ * The status of a cluster thumbnail image.
+ * The thumbnail is either loading, too large to render, or ready with a base64 PNG data URI.
+ */
+type ThumbnailStatus =
+  | { kind: 'loading' }
+  | { kind: 'too-large' }
+  | { kind: 'ready'; src: string }
+
 
 const OptionsMenu = ({
   currentNetworkId,
@@ -266,13 +282,26 @@ const ClusterPanel = memo(({
   onExplore: (cluster: MCODECluster, nodeScoreCutoff: number) => void
 }): JSX.Element => {
   // Seed from the cached thumbnail so a re-selected result shows it instantly.
-  const [image, setImage] = useState<string | null>(cluster.thumbnail ?? null)
+  const [status, setStatus] = useState<ThumbnailStatus>(() =>
+    cluster.thumbnail
+      ? { kind: 'ready', src: cluster.thumbnail }
+      : isClusterTooLargeToVisualize(cluster)
+        ? { kind: 'too-large' }
+        : { kind: 'loading' },
+  )
   // Controlled slider value: the cluster's explored cutoff if any, else the
   // analysis default. Initialized once per mount — the result+seed key on this
   // component remounts it (re-seeding this state) when the user switches results.
   const [cutoff, setCutoff] = useState(cluster.nodeScoreCutoff ?? algorithm.getParameters().nodeScoreCutoff)
 
   const updateImage = () => {
+    if (isClusterTooLargeToVisualize(cluster)) {
+      cluster.thumbnail = undefined
+      cluster.nodePositions = undefined
+      setStatus({ kind: 'too-large' })
+      return
+    }
+
     // Keep only the edges whose endpoints are both in the cluster — filtered in
     // memory from the network's pre-fetched edge list (no API calls here).
     const clusterNodes = new Set(cluster.nodes)
@@ -338,7 +367,7 @@ const ClusterPanel = memo(({
 
     cy.destroy()
     document.body.removeChild(container)
-    setImage(png)
+    setStatus({ kind: 'ready', src: png })
   }
 
   // Track the thumb live while dragging...
@@ -350,7 +379,7 @@ const ClusterPanel = memo(({
     event: React.SyntheticEvent | Event,
     value: number | number[],
   ): void => {
-    setImage(null) // clear the thumbnail while the new cluster is computed to show the spinner
+    setStatus({ kind: 'loading' }) // show the spinner while the new cluster is computed
     setTimeout(() => {
       // Re-grow the cluster at a new node-score cutoff (the size slider) and update the thumbnail.
       const explored = algorithm.exploreCluster(cluster, cutoff)
@@ -369,11 +398,11 @@ const ClusterPanel = memo(({
     // result switches (clusters live in component state); exploration makes a
     // new cluster object with no thumbnail, so that one regenerates.
     if (cluster.thumbnail) {
-      setImage(cluster.thumbnail)
+      setStatus({ kind: 'ready', src: cluster.thumbnail })
       return
     }
     if (cluster.nodes.length === 0) {
-      setImage(null)
+      setStatus({ kind: 'loading' })
       return
     }
     updateImage()
@@ -425,16 +454,20 @@ const ClusterPanel = memo(({
             alignItems: 'center',
           }}
         >
-          {image ? (
-            <Box
-              component="img"
-              src={image}
-              alt="Cluster Thumbnail"
-              sx={{ maxWidth: '100%', maxHeight: '100%' }}
-            />
-          ) : (
-            <CircularProgress color="primary" />
-          )}
+        {status.kind === 'ready' ? (
+          <Box
+            component="img"
+            src={status.src}
+            alt="Cluster Thumbnail"
+            sx={{ maxWidth: '100%', maxHeight: '100%' }}
+          />
+        ) : status.kind === 'too-large' ? (
+          <Typography variant="caption" color="text.disabled" sx={{ textAlign: 'center', px: 1 }}>
+            Cluster is too big to show
+          </Typography>
+        ) : (
+          <CircularProgress color="primary" />
+        )}
         </Box>
         <Box sx={{ flexGrow: 1 }}>
           <Typography variant="body2" color="text.secondary" sx={{ width: '100%', textAlign: 'right' }}>
