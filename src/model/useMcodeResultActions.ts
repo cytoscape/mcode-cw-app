@@ -61,12 +61,19 @@ export function useMcodeResultActions(
       if (!result.success) console.warn(`MCODE style: failed to ${label}:`, result.error.message)
     }
 
-    // NOTE: the Cytoscape Web VisualStyleApi mapping creators don't accept explicit value tables, so
-    // the exact pairings from the desktop style (Seed -> rectangle, score -> white/black/red gradient, etc.)
-    // can't be specified here — cyweb assigns the concrete mapping values.
-    // We translate the property keys, the default, and the mapping structure (which column drives which visual property).
+    // Default node size (remove any previous mapping).
+    warnOnFail('remove node size width mapping', visualStyleApi.removeMapping(networkId, 'nodeWidth'))
+    warnOnFail('remove node size height mapping', visualStyleApi.removeMapping(networkId, 'nodeHeight'))
+    warnOnFail(
+      'set default node width',
+      visualStyleApi.setDefault(networkId, 'nodeWidth', 40),
+    )
+    warnOnFail(
+      'set default node height',
+      visualStyleApi.setDefault(networkId, 'nodeHeight', 40),
+    )
 
-    // Default node color: white.
+    // Default node color.
     warnOnFail(
       'set default node color',
       visualStyleApi.setDefault(networkId, 'nodeBackgroundColor', '#ffffff'),
@@ -80,12 +87,12 @@ export function useMcodeResultActions(
         'nodeShape',
         statusColumn,
         'string',
-        // { Seed: 'rectangle', Clustered: 'ellipse' },
+        { Seed: 'rectangle', Clustered: 'ellipse', Unclustered: 'diamond' },
       ),
     )
 
-    // Node fill color mapped continuously from the node-score column
-    // (the lower the score the darker the color).
+    // Node fill color mapped continuously from the node-score column: 0 (or below)
+    // is white, fading from black up to red at the cluster's max score.
     warnOnFail(
       'map node color',
       visualStyleApi.createContinuousMapping(
@@ -95,6 +102,12 @@ export function useMcodeResultActions(
         scoreColumn,
         [0, maxScore],
         'double',
+        [
+          { value: 0, vpValue: '#000000', inclusive: true },
+          { value: maxScore, vpValue: '#ff0000' },
+        ],
+        '#ffffff',
+        '#ff0000',
       ),
     )
   }, [selectedResult, visualStyleApi])
