@@ -87,7 +87,7 @@ export function useMcodeResultActions(
         'nodeShape',
         statusColumn,
         'string',
-        { Seed: 'rectangle', Clustered: 'ellipse', Unclustered: 'diamond' },
+        // { Seed: 'rectangle', Clustered: 'ellipse', Unclustered: 'diamond' },
       ),
     )
 
@@ -102,12 +102,12 @@ export function useMcodeResultActions(
         scoreColumn,
         [0, maxScore],
         'double',
-        [
-          { value: 0, vpValue: '#000000', inclusive: true },
-          { value: maxScore, vpValue: '#ff0000' },
-        ],
-        '#ffffff',
-        '#ff0000',
+        // [
+        //   { value: 0, vpValue: '#000000', inclusive: true },
+        //   { value: maxScore, vpValue: '#ff0000' },
+        // ],
+        // '#ffffff',
+        // '#ff0000',
       ),
     )
   }, [selectedResult, visualStyleApi])
