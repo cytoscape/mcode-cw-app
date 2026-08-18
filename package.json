@@ -1,39 +1,63 @@
 {
   "name": "@cytoscape-web/mcode",
-  "description": "MCODE App for Cytoscape Web",
+  "description": "MCODE finds clusters (highly interconnected regions) in a network",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "//cyweb": [
+    "This app's identity, written ONCE. The Module Federation container name,",
+    "the CyApp.id, the dev server port and the dev install manifest all read",
+    "from here (see vite.config.ts and virtual:cyweb-app-meta)."
+  ],
+  "cyweb": {
+    "id": "mcode",
+    "displayName": "MCODE",
+    "port": 6600
+  },
   "scripts": {
-    "build": "webpack --config webpack.config.js --env production=true",
-    "build-dev": "webpack --config webpack.config.js --env production=false",
-    "dev": "webpack serve --open /remoteEntry.js --mode development",
+    "build": "vite build",
+    "dev": "vite",
+    "verify": "cyweb-app verify",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "tsc -p tsconfig.test.json && node -e 'require(\"fs\").writeFileSync(\"dist-test/package.json\",JSON.stringify({type:\"commonjs\"}))' && node --test 'dist-test/**/*.test.js'"
   },
-  "devDependencies": {
-    "@module-federation/enhanced": "^2.6.0",
-    "@mui/material": "^5.18.0",
-    "@types/cytoscape": "^3.21.0",
-    "@types/cytoscape-euler": "^1.2.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "ts-loader": "^9.5.2",
-    "typescript": "^5.7.3",
-    "webpack": "^5.107.2",
-    "webpack-cli": "^7.0.3",
-    "webpack-dev-server": "^5.2.4"
-  },
-  "dependencies": {
-    "@cytoscape-web/api-types": "^1.0.0-beta.2",
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^5.18.0",
-    "cytoscape": "^3.34.0",
-    "cytoscape-euler": "^1.2.4"
-  },
+  "//peerDependencies": [
+    "Provided by the HOST as Module Federation singletons — the share block",
+    "uses `import: false`, so no fallback copy is bundled. Import only the",
+    "package ROOTS (e.g. '@mui/material', never '@mui/material/Box'), or a",
+    "second copy gets bundled and the no-shared-payload gate fails the build.",
+    "@mui/icons-material is banned outright; see src/components/icons.tsx."
+  ],
   "peerDependencies": {
+    "@emotion/react": "^11.10.4",
+    "@emotion/styled": "^11.10.4",
     "@mui/material": "^5.18.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@cytoscape-web/api-types": "^1.0.0-beta.3",
+    "@cytoscape-web/app-runtime": "^0.1.0",
+    "@emotion/react": "^11.10.4",
+    "@emotion/styled": "^11.10.4",
+    "@module-federation/vite": "1.16.8",
+    "@mui/material": "^5.18.0",
+    "@types/cytoscape": "^3.21.0",
+    "@types/cytoscape-euler": "^1.2.4",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "^5.7.3",
+    "vite": "8.0.13"
+  },
+  "dependencies": {
+    "cytoscape": "^3.34.0",
+    "cytoscape-euler": "^1.2.4"
   }
 }

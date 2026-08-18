@@ -1,11 +1,3 @@
-import AddIcon from '@mui/icons-material/Add'
-import CheckIcon from '@mui/icons-material/Check'
-import DeleteIcon from '@mui/icons-material/Delete'
-import ExpandLessIcon from '@mui/icons-material/ExpandLess'
-import FileDownloadIcon from '@mui/icons-material/FileDownload'
-import InfoIcon from '@mui/icons-material/Info'
-import MenuIcon from '@mui/icons-material/Menu'
-import PaletteIcon from '@mui/icons-material/Palette'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Accordion,
@@ -34,7 +26,19 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { SelectChangeEvent } from '@mui/material/Select';
+// NOTE: root import only — a subpath like '@mui/material/Select' bundles a
+// second copy of MUI past the shared-singleton boundary (build gate fails).
+import type { SelectChangeEvent } from '@mui/material'
+import {
+  AddIcon,
+  CheckIcon,
+  DeleteIcon,
+  ExpandLessIcon,
+  FileDownloadIcon,
+  InfoIcon,
+  MenuIcon,
+  PaletteIcon,
+} from './icons'
 
 import cytoscape from 'cytoscape'
 import euler from 'cytoscape-euler'
@@ -743,6 +747,7 @@ const MCODEPanel = (): JSX.Element => {
       }
     }
     networkEdgesCache.current.set(networkId, result)
+
     return result
   }
 

@@ -5,8 +5,8 @@
  * (potentially long, synchronous) MCODE algorithm here so the UI thread is
  * never blocked, and posts the ranked clusters back.
  *
- * Bundled automatically by webpack 5 via the `new Worker(new URL(...))` call
- * in `useMcodeWorker`. Its import graph (mcodeAlgorithm → mcodeGraph →
+ * Bundled automatically by Vite via the `?worker&url` import in
+ * `useMcodeWorker`. Its import graph (mcodeAlgorithm → mcodeGraph →
  * mcodeTypes) is pure and free of React / MUI / cyweb dependencies.
  */
 import { MCODEAlgorithm } from './mcodeAlgorithm'

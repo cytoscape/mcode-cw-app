@@ -1,7 +1,7 @@
 {
   // Compiles the MCODE model + its tests to CommonJS under dist-test/, so they
   // can run on Node's built-in test runner (`node --test`) without extra deps.
-  // The main tsconfig.json targets ESM for the webpack/Module Federation build;
+  // The main tsconfig.json targets ESM for the Vite/Module Federation build;
   // this config is test-only.
   "extends": "./tsconfig.json",
   "compilerOptions": {

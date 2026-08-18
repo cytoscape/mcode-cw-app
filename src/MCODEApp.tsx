@@ -1,11 +1,15 @@
 /**
  * Update:
- *   1. `id`          → must match the Module Federation `name` in webpack.config.js
- *   2. `name`        → human-readable name shown in the host's App Settings
- *   3. `description` → one-line summary
- *   4. `resources`   → add/remove panels and menu items
- *   5. `mount()`     → register context menus, event listeners, etc.
- *   6. `unmount()`   → clean up event listeners from mount()
+ *   1. `resources`   → add/remove panels and menu items
+ *   2. `mount()`     → register context menus, event listeners, etc.
+ *   3. `unmount()`   → clean up event listeners from mount()
+ *
+ * Identity (id, display name, version, description) arrives from
+ * `virtual:cyweb-app-meta`, which the build fills in from the `cyweb` block
+ * and standard fields in package.json — written once, read everywhere. Do NOT
+ * `import packageJson from '../package.json'`: that pulls the whole file,
+ * devDependencies included, into the browser bundle (`cyweb-app verify` fails
+ * a build that does).
  *
  * Resources (panels and menu items) are registered declaratively — the host
  * renders them automatically. Context menus need `apis` access, so they are
@@ -15,15 +19,12 @@
 import { lazy } from 'react'
 
 import { AppContext, CyAppWithLifecycle } from 'cyweb/ApiTypes'
-import packageJson from '../package.json'
-
-
-const { version } = packageJson
+import { description, displayName, id, version } from 'virtual:cyweb-app-meta'
 
 export const MCODEApp: CyAppWithLifecycle = {
-  id: 'mcode', // must match the Module Federation `name` in webpack.config.js
-  name: 'MCODE',
-  description: 'MCODE finds clusters (highly interconnected regions) in a network',
+  id, // the Module Federation container name, from `cyweb.id` in package.json
+  name: displayName,
+  description,
   version,
   apiVersion: '1.0',
 

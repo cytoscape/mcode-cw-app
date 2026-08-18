@@ -1,22 +1,37 @@
 {
-  "include": ["src/**/*"],
-  "files": [
-    "node_modules/@cytoscape-web/api-types/index.d.ts"
+  "//": [
+    "App sources only. Build tooling (vite.config.ts) lives in",
+    "tsconfig.node.json; the Node-test compile lives in tsconfig.test.json.",
+    "",
+    "The `types` list is what pulls in the ambient `cyweb/*` modules,",
+    "`virtual:cyweb-app-meta` and Vite's `*?worker&url` declarations — do NOT",
+    "set `typeRoots`, it suppresses the default lookup that finds these."
   ],
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"],
   "compilerOptions": {
-    "typeRoots": ["./node_modules/@types", "./src/types"],
-    "allowSyntheticDefaultImports": true,
-    "outDir": "./dist/",
-    "noImplicitAny": true,
-    "module": "ESNext",
     "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "allowJs": true,
-    "esModuleInterop": true,
-    "moduleResolution": "node",
-    "sourceMap": true,
+
+    "noImplicitAny": true,
     "strictNullChecks": true,
+    "isolatedModules": true,
+    "noEmit": true,
+
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
     "resolveJsonModule": true,
-    "baseUrl": "."
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
+
+    "types": [
+      "@cytoscape-web/api-types",
+      "@cytoscape-web/app-runtime/meta",
+      "vite/client"
+    ]
   }
 }
