@@ -189,7 +189,7 @@ const OptionsMenu = ({
             View Source Network
           </Typography>
         </MenuItem>
-        <MenuItem
+        {/*<MenuItem
           disabled={!selectedResult}
           onClick={handleApplyMcodeStyle}
         >
@@ -197,7 +197,7 @@ const OptionsMenu = ({
           <Typography component="span" sx={{ pl: 0.5 }}>
             Apply MCODE Style
           </Typography>
-        </MenuItem>
+        </MenuItem>*/}
         <Divider sx={{ my: 0.5 }} />
         <MenuItem
           disabled={!selectedCluster}
@@ -738,12 +738,12 @@ const MCODEPanel = (): JSX.Element => {
     if (cached) return cached
 
     const result: NetworkEdge[] = []
-    const idsResult = elementApi.getEdgeIds(networkId)
-    if (idsResult.success) {
-      for (const edgeId of idsResult.data.edgeIds) {
-        const edge = elementApi.getEdge(networkId, edgeId)
-        if (!edge.success) continue
-        result.push({ id: edgeId, source: edge.data.sourceId, target: edge.data.targetId })
+
+    const edgesResult = elementApi.getEdges(networkId)
+
+    if (edgesResult.success) {
+      for (const edge of edgesResult.data.edges) {
+        result.push({ id: edge.id, source: edge.sourceId, target: edge.targetId })
       }
     }
     networkEdgesCache.current.set(networkId, result)

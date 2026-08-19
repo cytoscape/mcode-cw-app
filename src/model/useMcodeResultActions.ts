@@ -62,8 +62,8 @@ export function useMcodeResultActions(
     }
 
     // Default node size (remove any previous mapping).
-    warnOnFail('remove node size width mapping', visualStyleApi.removeMapping(networkId, 'nodeWidth'))
-    warnOnFail('remove node size height mapping', visualStyleApi.removeMapping(networkId, 'nodeHeight'))
+    // warnOnFail('remove node size width mapping', visualStyleApi.removeMapping(networkId, 'nodeWidth'))
+    // warnOnFail('remove node size height mapping', visualStyleApi.removeMapping(networkId, 'nodeHeight'))
     warnOnFail(
       'set default node width',
       visualStyleApi.setDefault(networkId, 'nodeWidth', 40),
@@ -87,29 +87,29 @@ export function useMcodeResultActions(
         'nodeShape',
         statusColumn,
         'string',
-        // { Seed: 'rectangle', Clustered: 'ellipse', Unclustered: 'diamond' },
+        { Seed: 'rectangle', Clustered: 'ellipse', Unclustered: 'diamond' },
       ),
     )
 
     // Node fill color mapped continuously from the node-score column: 0 (or below)
     // is white, fading from black up to red at the cluster's max score.
-    warnOnFail(
-      'map node color',
-      visualStyleApi.createContinuousMapping(
-        networkId,
-        'nodeBackgroundColor',
-        'color',
-        scoreColumn,
-        [0, maxScore],
-        'double',
-        // [
-        //   { value: 0, vpValue: '#000000', inclusive: true },
-        //   { value: maxScore, vpValue: '#ff0000' },
-        // ],
-        // '#ffffff',
-        // '#ff0000',
-      ),
-    )
+    // warnOnFail(
+    //   'map node color',
+    //   visualStyleApi.createContinuousMapping(
+    //     networkId,
+    //     'nodeBackgroundColor',
+    //     'color',
+    //     scoreColumn,
+    //     [0, maxScore],
+    //     'double',
+    //     [
+    //       { value: 0, vpValue: '#000000', inclusive: true },
+    //       { value: maxScore, vpValue: '#ff0000' },
+    //     ],
+    //     '#ffffff',
+    //     '#ff0000',
+    //   ),
+    // )
   }, [selectedResult, visualStyleApi])
 
   const createClusterNetwork = useCallback(() => {
