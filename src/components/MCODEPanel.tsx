@@ -52,6 +52,18 @@ import { JSX } from 'react/jsx-runtime'
 
 import { MCODEAlgorithm } from '../model/mcodeAlgorithm'
 import { buildMcodeNodeTableData, mcodeColumnNames } from '../model/mcodeExport'
+import {
+  addResult,
+  discardAllResults,
+  discardSelectedResult,
+  NetworkEdge,
+  networkEdgesCache,
+  removeResultsForNetwork,
+  selectCluster,
+  selectResult,
+  takeNextResultId,
+  useMcodeResults,
+} from '../model/mcodeResultStore'
 import { MCODECluster, MCODEParameters, MCODEResult } from '../model/mcodeTypes'
 import { useMcodeResultActions } from '../model/useMcodeResultActions'
 import { McodeCancelledError, useMcodeWorker } from '../model/useMcodeWorker'
@@ -59,9 +71,6 @@ import { NewAnalysisDialog } from './NewAnalysisDialog'
 
 
 cytoscape.use(euler)
-
-/** A source-network edge, reduced to what cluster thumbnails need. */
-type NetworkEdge = { id: string; source: string; target: string }
 
 /** Clusters larger than this aren't rendered as thumbnails (layout is too slow). */
 const MAX_VISUALIZABLE_CLUSTER_SIZE = 500
@@ -90,7 +99,7 @@ const OptionsMenu = ({
   onDiscardAllResults,
 }: {
   currentNetworkId: string | null
-  results: MCODEResult[]
+  results: readonly MCODEResult[]
   selectedResult: MCODEResult | null
   selectedCluster: MCODECluster | null
   onShowAnalysisParameters: (show: boolean) => void
@@ -700,10 +709,11 @@ const MCODEPanel = (): JSX.Element => {
     const current = workspaceApi.getCurrentNetworkId()
     return current.success ? current.data.networkId : null
   })
-  const [results, setResults] = useState<MCODEResult[]>([])
-  const [selectedResult, setSelectedResult] = useState<MCODEResult | null>(null)
+  // Results live in a module-level store (mcodeResultStore), NOT component
+  // state: closing the Side Panel unmounts this whole tree, and the results
+  // must survive that. Only transient UI state stays local below.
+  const { results, selectedResult, selectedCluster } = useMcodeResults()
   const [showParametersResult, setShowParametersResult] = useState(false)
-  const [selectedCluster, setSelectedCluster] = useState<MCODECluster | null>(null)
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false)
   const [noResultsOpen, setNoResultsOpen] = useState(false)
   // The "Analyzing network…" state is shown while the MCODE worker is running.
@@ -715,11 +725,6 @@ const MCODEPanel = (): JSX.Element => {
   // (the worker is done, so there's nothing left to cancel).
   const [saving, setSaving] = useState(false)
 
-  // Monotonically increasing result id.
-  // It never reuses an id, even after results are discarded,
-  // so a new result can't collide with a deleted one's leftover node columns.
-  const nextResultId = useRef(1)
-
   // Set by the Cancel button. Covers the whole submit operation, not just the
   // worker: the worker is aborted via cancelMcode(), but the post-worker
   // main-thread work (writing node columns, committing the result) is only
@@ -729,12 +734,11 @@ const MCODEPanel = (): JSX.Element => {
   // Runs the MCODE algorithm in a web worker so the UI thread stays responsive.
   const { run: runMcode, cancel: cancelMcode } = useMcodeWorker()
 
-  // Cache of every network's edges ({id, source, target}), so cluster thumbnails
-  // filter an in-memory list instead of each one re-fetching all edges from the
-  // source network. Keyed by network id, so results on the same network share it.
-  const networkEdgesCache = useRef<Map<string, NetworkEdge[]>>(new Map())
+  // Fetch a network's edges through the module-level cache (mcodeResultStore),
+  // so cluster thumbnails filter an in-memory list instead of each one
+  // re-fetching all edges from the source network — even across panel remounts.
   const getNetworkEdges = (networkId: string): NetworkEdge[] => {
-    const cached = networkEdgesCache.current.get(networkId)
+    const cached = networkEdgesCache.get(networkId)
     if (cached) return cached
 
     const result: NetworkEdge[] = []
@@ -746,7 +750,7 @@ const MCODEPanel = (): JSX.Element => {
         result.push({ id: edge.id, source: edge.sourceId, target: edge.targetId })
       }
     }
-    networkEdgesCache.current.set(networkId, result)
+    networkEdgesCache.set(networkId, result)
 
     return result
   }
@@ -765,14 +769,7 @@ const MCODEPanel = (): JSX.Element => {
   useCyWebEvent('network:deleted', ({ networkId }) => {
     console.debug(`Network deleted: ${networkId}`)
     // Delete all MCODE results that have the same networkId, and clear the selected result if it's among them.
-    setResults((prev) => {
-      const filtered = prev.filter((r) => r.networkId !== networkId)
-      if (selectedResult && selectedResult.networkId === networkId) {
-        setSelectedResult(null)
-        setSelectedCluster(null)
-      }
-      return filtered
-    })
+    removeResultsForNetwork(networkId)
   })
 
   const handleNewAnalysisClick = (): void => {
@@ -864,13 +861,11 @@ const MCODEPanel = (): JSX.Element => {
       setSaving(true)
       await new Promise((resolve) => setTimeout(resolve))
 
-      // 4. Build the result. The name is "{COUNT} - {network name}" where COUNT
-      //    is the new result's position in the results array (1-based, i.e. the
-      //    last index once it is appended).
+      // 4. Build the result. The name is "{ID} - {network name}" where ID is
+      //    the store's monotonically increasing result id.
       const summary = workspaceApi.getNetworkSummary(currentNetworkId)
       const networkName = summary.success ? summary.data.name : currentNetworkId
-      const id = nextResultId.current
-      nextResultId.current += 1
+      const id = takeNextResultId()
       const newResult: MCODEResult = {
         id,
         name: `${id} - ${networkName}`,
@@ -878,9 +873,7 @@ const MCODEPanel = (): JSX.Element => {
         algorithm,
         clusters,
       }
-      setResults((prev) => [...prev, newResult])
-      setSelectedResult(newResult)
-      setSelectedCluster(null)
+      addResult(newResult)
       console.debug(`MCODE found ${clusters.length} cluster(s)`, clusters)
 
       // 5. Add the MCODE result columns to the source network's node table:
@@ -919,7 +912,7 @@ const MCODEPanel = (): JSX.Element => {
     if (selectedCluster === cluster) {
       return // already selected, do nothing
     }
-    setSelectedCluster(cluster)
+    selectCluster(cluster)
     // Re-select the nodes in the source network so the selection tracks the newly selected cluster.
     if (selectedResult) {
       const selected = selectionApi.exclusiveSelect(selectedResult.networkId, cluster.nodes, [])
@@ -930,7 +923,7 @@ const MCODEPanel = (): JSX.Element => {
   }, [selectedResult, selectedCluster, selectionApi])
 
   const handleExploreCluster = useCallback((cluster: MCODECluster, nodeScoreCutoff: number): void => {
-    setSelectedCluster(cluster)
+    selectCluster(cluster)
     // Re-select the now changed nodes in the source network so the selection tracks the new cluster.
     if (selectedResult) {
       const selected = selectionApi.exclusiveSelect(selectedResult.networkId, cluster.nodes, [])
@@ -958,27 +951,12 @@ const MCODEPanel = (): JSX.Element => {
   const handleDiscardSelectedResult = (): void => {
     if (selectedResult) {
       removeResultColumns(selectedResult)
-      setSelectedResult((prev) => {
-        const index = results.indexOf(prev!)
-        if (index > 0) {
-          return results[index - 1]
-        }
-        return results.length > 1 ? results[1] : null
-      })
-      const updatedResults = results.filter((r) => r !== selectedResult)
-      setResults(updatedResults)
-      setSelectedCluster(null)
-      if (updatedResults.length === 0) {
-        nextResultId.current = 1
-      }
+      discardSelectedResult()
     }
   }
   const handleDiscardAllResults = (): void => {
     results.forEach(removeResultColumns)
-    setSelectedResult(null)
-    setResults([])
-    setSelectedCluster(null)
-    nextResultId.current = 1
+    discardAllResults()
   }
 
   return (
@@ -1005,8 +983,7 @@ const MCODEPanel = (): JSX.Element => {
             size="small"
             onChange={(e) => {
               const result = results.find((r) => r.name === e.target.value) || null
-              setSelectedResult(result)
-              setSelectedCluster(null)
+              selectResult(result)
             }}
             displayEmpty
             renderValue={(value: unknown) => {

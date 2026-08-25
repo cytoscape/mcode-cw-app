@@ -16,6 +16,11 @@
   // Only the test files; tsc pulls in their (pure) imports automatically. This
   // intentionally excludes the React hooks / web worker under src/model (e.g.
   // useMcodeWorker.ts uses import.meta, which can't compile to CommonJS).
+  // The base config excludes *.test.ts (they must not enter the app build);
+  // that exclude is inherited and would cancel the include below, leaving tsc
+  // with zero inputs (and `node --test` running stale dist-test output), so
+  // override it with an empty list here.
   "files": [],
-  "include": ["src/model/**/*.test.ts"]
+  "include": ["src/model/**/*.test.ts"],
+  "exclude": []
 }

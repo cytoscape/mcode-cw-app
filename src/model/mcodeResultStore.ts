@@ -1,0 +1,134 @@
+/**
+ * Module-level store of the MCODE results, following the pattern of
+ * NetworkAnalyzer's analysisResultStore: the Side Panel unmounts its whole
+ * tree when closed (WorkspaceEditor renders it conditionally), so results kept
+ * in component state would vanish on close. This module lives as long as the
+ * app's JS module does, and the panel simply re-reads it on remount.
+ *
+ * State is one immutable snapshot object; every mutator replaces it and
+ * notifies subscribers, which is what useSyncExternalStore needs to trigger
+ * re-renders (the snapshot reference must be stable between mutations).
+ */
+import { useSyncExternalStore } from 'react'
+
+import { MCODECluster, MCODEResult } from './mcodeTypes'
+
+/** A source-network edge, reduced to what cluster thumbnails need. */
+export type NetworkEdge = { id: string; source: string; target: string }
+
+export interface McodeResultsState {
+  readonly results: readonly MCODEResult[]
+  readonly selectedResult: MCODEResult | null
+  readonly selectedCluster: MCODECluster | null
+}
+
+let state: McodeResultsState = {
+  results: [],
+  selectedResult: null,
+  selectedCluster: null,
+}
+
+// Monotonically increasing result id. It never reuses an id while any result
+// exists, even across panel close/reopen, so a new result can't collide with
+// a deleted one's leftover node columns. Reset to 1 only when the results
+// list empties through an explicit discard.
+let nextResultId = 1
+
+// Cache of every analyzed network's edges, so cluster thumbnails filter an
+// in-memory list instead of re-fetching all edges from the source network.
+// Keyed by network id; entries are dropped when the network is deleted.
+export const networkEdgesCache = new Map<string, NetworkEdge[]>()
+
+const listeners = new Set<() => void>()
+
+function emitChange(): void {
+  for (const listener of listeners) listener()
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function setState(partial: Partial<McodeResultsState>): void {
+  state = { ...state, ...partial }
+  emitChange()
+}
+
+/** The current results snapshot; re-renders the caller on every store change. */
+export function useMcodeResults(): McodeResultsState {
+  return useSyncExternalStore(subscribe, () => state)
+}
+
+/** Non-hook read of the current snapshot, for use outside React renders. */
+export function getMcodeResults(): McodeResultsState {
+  return state
+}
+
+/** Claim the next result id (increments the counter). */
+export function takeNextResultId(): number {
+  return nextResultId++
+}
+
+/** Append a new result and make it (with no cluster) the current selection. */
+export function addResult(result: MCODEResult): void {
+  setState({
+    results: [...state.results, result],
+    selectedResult: result,
+    selectedCluster: null,
+  })
+}
+
+/** Switch the selected result; clears the cluster selection. */
+export function selectResult(result: MCODEResult | null): void {
+  setState({ selectedResult: result, selectedCluster: null })
+}
+
+/**
+ * Select a cluster. Also safe to call with the already-selected cluster after
+ * mutating it in place (exploration does): every call publishes a fresh
+ * snapshot object, so subscribers re-render either way.
+ */
+export function selectCluster(cluster: MCODECluster | null): void {
+  setState({ selectedCluster: cluster })
+}
+
+/**
+ * Remove the selected result. The selection moves to the previous result in
+ * the list (or the next one when the first was discarded, or none remain).
+ */
+export function discardSelectedResult(): void {
+  const { results, selectedResult } = state
+  if (!selectedResult) return
+
+  const index = results.indexOf(selectedResult)
+  const remaining = results.filter((r) => r !== selectedResult)
+  if (remaining.length === 0) {
+    nextResultId = 1
+  }
+  setState({
+    results: remaining,
+    selectedResult: index > 0 ? results[index - 1] : (remaining[0] ?? null),
+    selectedCluster: null,
+  })
+}
+
+export function discardAllResults(): void {
+  nextResultId = 1
+  setState({ results: [], selectedResult: null, selectedCluster: null })
+}
+
+/** A network was deleted: drop its results, edge cache, and selection. */
+export function removeResultsForNetwork(networkId: string): void {
+  networkEdgesCache.delete(networkId)
+
+  const filtered = state.results.filter((r) => r.networkId !== networkId)
+  if (filtered.length === state.results.length) return
+
+  const selectionGone = state.selectedResult?.networkId === networkId
+  setState({
+    results: filtered,
+    selectedResult: selectionGone ? null : state.selectedResult,
+    selectedCluster: selectionGone ? null : state.selectedCluster,
+  })
+}
