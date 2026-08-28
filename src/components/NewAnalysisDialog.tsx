@@ -151,7 +151,17 @@ export const NewAnalysisDialog = ({
   const numberFieldSx = { width: 90 }
 
   return (
-    <Dialog open={open} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      maxWidth="xs"
+      fullWidth
+      // Escape cancels (same as the Cancel button); backdrop clicks stay inert.
+      onClose={(_event, reason) => {
+        if (reason === 'escapeKeyDown') {
+          onClose()
+        }
+      }}
+    >
       <DialogTitle>New MCODE Analysis</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
