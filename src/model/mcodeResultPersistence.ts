@@ -147,41 +147,6 @@ export const isStoredResultsPayload = (
   Array.isArray(value.results)
 
 /**
- * Why a payload would be rejected, for a log line. Returns the first failing
- * check per result rather than a boolean, so a bad record can be diagnosed
- * from console output instead of a debugger.
- */
-export const describeStoredResults = (value: unknown): unknown => {
-  if (!isRecord(value)) return { reject: 'not an object', type: typeof value }
-  if (value.version !== MCODE_PAYLOAD_VERSION) {
-    return { reject: 'version mismatch', found: value.version, expected: MCODE_PAYLOAD_VERSION }
-  }
-  if (!Array.isArray(value.results)) return { reject: 'results is not an array' }
-  return {
-    results: value.results.map((stored, index) => {
-      if (!isRecord(stored)) return { index, reject: 'not an object' }
-      if (typeof stored.id !== 'number') return { index, reject: 'id is not a number' }
-      if (typeof stored.name !== 'string') return { index, reject: 'name is not a string' }
-      if (!Array.isArray(stored.clusters)) return { index, reject: 'clusters is not an array' }
-      const badCluster = stored.clusters.findIndex((c) => !isStoredCluster(c))
-      if (badCluster !== -1) return { index, reject: `cluster ${badCluster} malformed` }
-      if (!isRecord(stored.snapshot)) return { index, reject: 'snapshot is not an object' }
-      if (!isRecord(stored.snapshot.params)) return { index, reject: 'snapshot.params missing' }
-      if (!isAdjacencyEntryArray(stored.snapshot.adjacency)) {
-        return { index, reject: 'snapshot.adjacency is not [id, string[]][]' }
-      }
-      if (!isNodeInfoEntryArray(stored.snapshot.nodeInfo)) {
-        return { index, reject: 'snapshot.nodeInfo is not [id, NodeInfo][]' }
-      }
-      if (!isStringArray(stored.snapshot.nodesByScoreDesc)) {
-        return { index, reject: 'snapshot.nodesByScoreDesc is not string[]' }
-      }
-      return { index, ok: true }
-    }),
-  }
-}
-
-/**
  * Detach a payload from the host's frozen store copy.
  *
  * A JSON round trip, not `structuredClone`: the payload is JSON by

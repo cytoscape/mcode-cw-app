@@ -57,7 +57,6 @@ import {
   addResult,
   discardAllResults,
   discardSelectedResult,
-  getMcodeResults,
   NetworkEdge,
   networkEdgesCache,
   removeResultsForNetwork,
@@ -750,7 +749,8 @@ const MCODEPanel = (): JSX.Element => {
       // Caching the empty read would leave every thumbnail blank for the rest
       // of the session, so return uncached and let the next render retry.
       console.warn(
-        `[MCODE panel] getEdges(${networkId}) failed (${edgesResult.error.code}); not caching`,
+        `Failed to read edges for network ${networkId}:`,
+        edgesResult.error.message,
       )
       return []
     }
@@ -761,7 +761,6 @@ const MCODEPanel = (): JSX.Element => {
       target: edge.targetId,
     }))
     networkEdgesCache.set(networkId, result)
-    console.debug(`[MCODE panel] cached ${result.length} edge(s) for ${networkId}`)
 
     return result
   }
@@ -798,22 +797,16 @@ const MCODEPanel = (): JSX.Element => {
   // sight; syncSelectionToNetwork then points the selection at them, which is
   // what stops another network's clusters from staying on screen.
   useEffect(() => {
-    console.debug(`[MCODE panel] network is now ${currentNetworkId || '(none)'}`)
     if (!currentNetworkId) return
     // try/catch: a storage or decode failure must not take the panel down with
-    // it. Without this the host's PluginErrorBoundary replaces the whole panel
-    // with "Plugin unavailable", which hides the error that caused it.
+    // it. The host's PluginErrorBoundary would otherwise replace the whole
+    // panel with "Plugin unavailable", which also hides the cause.
     try {
       hydrateNetworkResults(currentNetworkId)
       syncSelectionToNetwork(currentNetworkId)
     } catch (e) {
-      console.error('[MCODE panel] restoring stored results FAILED', e)
+      console.error('Failed to restore stored MCODE results:', e)
     }
-    const { results, selectedResult: selected } = getMcodeResults()
-    console.debug(
-      `[MCODE panel] ${results.length} result(s) in memory, selected: ${selected?.name ?? '(none)'}`,
-      results.map((r) => `${r.id}:${r.networkId}`),
-    )
   }, [currentNetworkId])
 
   const handleNewAnalysisClick = (): void => {

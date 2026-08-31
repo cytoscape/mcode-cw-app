@@ -42,11 +42,7 @@ import {
   subscribeMcodeResults,
 } from './mcodeResultStore'
 import { MCODEResult } from './mcodeTypes'
-import {
-  describeStoredResults,
-  fromStoredResults,
-  toStoredResults,
-} from './mcodeResultPersistence'
+import { fromStoredResults, toStoredResults } from './mcodeResultPersistence'
 
 /** Per-network key: every MCODE result computed on that network. */
 const RESULTS_KEY = 'results'
@@ -62,16 +58,6 @@ const NEXT_ID_KEY = 'nextResultId'
  * app does not — `setAppDataApi(null)` flushes first.
  */
 const WRITE_DEBOUNCE_MS = 400
-
-/**
- * Every storage step logs one line, so a failure can be read off the console
- * instead of reproduced. `window.__mcodeAppData()` dumps the whole state on
- * demand — what is hydrated, what was written, and the raw stored value.
- */
-const trace = (message: string, detail?: unknown): void => {
-  if (detail === undefined) console.debug(`[MCODE appData] ${message}`)
-  else console.debug(`[MCODE appData] ${message}`, detail)
-}
 
 let appData: AppDataApi | null = null
 let unsubscribe: (() => void) | null = null
@@ -117,14 +103,13 @@ export function setAppDataApi(api: AppDataApi | null): void {
   // `api == null` and not `=== null`: a host without the appData domain hands
   // in `undefined`, and calling through that would throw inside the panel.
   if (appData === null) {
-    trace(
-      api === undefined
-        ? 'api is UNDEFINED — this host has no appData domain (needs cytoscape-web#687); results will not persist'
-        : 'api released (app unmounted); stored results are kept',
-    )
+    if (api === undefined) {
+      console.warn(
+        'MCODE app data: this host has no appData domain; results will not persist',
+      )
+    }
     return
   }
-  trace('api received from mount()')
 
   // App-scoped read: no network involved, so it works before any network is
   // current. APP11 just means this app has never stored a counter.
@@ -134,15 +119,11 @@ export function setAppDataApi(api: AppDataApi | null): void {
       setNextResultId(stored.data.value)
       lastNextIdWritten = getNextResultId()
     }
-    trace(`getGlobal("${NEXT_ID_KEY}") = ${String(stored.data.value)}, counter now ${getNextResultId()}`)
-  } else if (stored.error.code === 'APP11') {
-    trace(`getGlobal("${NEXT_ID_KEY}") APP11 (never written) — counter stays ${getNextResultId()}`)
-  } else {
+  } else if (stored.error.code !== 'APP11') {
     warn(`failed to read "${NEXT_ID_KEY}"`, stored.error)
   }
 
   unsubscribe = subscribeMcodeResults(scheduleWrite)
-  installDebugHook()
 }
 
 /**
@@ -152,44 +133,26 @@ export function setAppDataApi(api: AppDataApi | null): void {
  */
 export function hydrateNetworkResults(networkId: string): void {
   const api = appData
-  if (api === null) {
-    trace(`hydrate ${networkId} SKIPPED — no api yet`)
-    return
-  }
-  if (networkId === '') return
-  if (hydrated.has(networkId)) {
-    trace(`hydrate ${networkId} skipped — already read this session`)
-    return
-  }
+  if (api === null || networkId === '' || hydrated.has(networkId)) return
   hydrated.add(networkId)
 
   const stored = api.get(networkId, RESULTS_KEY)
   if (!stored.success) {
     // APP11 = nothing stored: the normal case for a never-analyzed network.
-    if (stored.error.code === 'APP11') {
-      trace(`hydrate ${networkId}: APP11, nothing stored for this network`)
-    } else {
+    if (stored.error.code !== 'APP11') {
       warn(`failed to read results for network ${networkId}`, stored.error)
     }
     return
   }
-  trace(
-    `hydrate ${networkId}: read ${JSON.stringify(stored.data.value).length} chars of JSON`,
-  )
 
   const results = fromStoredResults(networkId, stored.data.value)
   if (results.length === 0) {
     console.warn(
       `MCODE app data: stored results for network ${networkId} were unreadable and have been dropped`,
-      describeStoredResults(stored.data.value),
     )
     return
   }
   restoreNetworkResults(networkId, results)
-  trace(
-    `hydrate ${networkId}: restored ${results.length} result(s)`,
-    results.map((r) => ({ id: r.id, name: r.name, clusters: r.clusters.length })),
-  )
   // Seed the write cache from what is now in the store, so the hydration
   // itself does not trigger a rewrite of the same bytes.
   lastWritten.set(networkId, JSON.stringify(toStoredResults(results)))
@@ -236,11 +199,6 @@ const flushWrites = (): void => {
       results.length === 0
         ? api.remove(networkId, RESULTS_KEY)
         : api.set(networkId, RESULTS_KEY, payload)
-    trace(
-      `${results.length === 0 ? 'remove' : 'set'} ${networkId}: ` +
-        `${results.length} result(s), ${json.length} chars, ` +
-        `${written.success ? 'OK' : `FAILED ${written.error.code}`}`,
-    )
     if (!written.success) {
       // APP13 = over the 5 MB per-entry cap (a very large network's scoring
       // state). APP1 = the network left the workspace mid-write. Either way
@@ -255,55 +213,9 @@ const flushWrites = (): void => {
   const nextId = getNextResultId()
   if (nextId !== lastNextIdWritten) {
     const written = api.setGlobal(NEXT_ID_KEY, nextId)
-    trace(
-      `setGlobal("${NEXT_ID_KEY}") = ${nextId}: ` +
-        `${written.success ? 'OK' : `FAILED ${written.error.code}`}`,
-    )
     if (written.success) lastNextIdWritten = nextId
     else warn(`failed to store "${NEXT_ID_KEY}"`, written.error)
   }
-}
-
-/**
- * `window.__mcodeAppData()` — a one-call state dump for pasting into a bug
- * report. Reads storage live rather than reporting cached bookkeeping.
- */
-const installDebugHook = (): void => {
-  const w = window as unknown as Record<string, unknown>
-  if (w.__mcodeAppData !== undefined) return
-  w.__mcodeAppData = (): unknown => {
-    const api = appData
-    const { results, selectedResult } = getMcodeResults()
-    const networks = [...new Set([...hydrated, ...results.map((r) => r.networkId)])]
-    return {
-      apiPresent: api !== null,
-      nextResultId: getNextResultId(),
-      nextResultIdStored: api === null ? null : api.getGlobal(NEXT_ID_KEY),
-      inMemory: results.map((r) => ({
-        id: r.id,
-        name: r.name,
-        networkId: r.networkId,
-        clusters: r.clusters.length,
-      })),
-      selected: selectedResult === null ? null : selectedResult.name,
-      hydratedNetworks: [...hydrated],
-      lastWrittenChars: [...lastWritten].map(([id, json]) => [id, json.length]),
-      stored: networks.map((networkId) => {
-        const read = api === null ? null : api.get(networkId, RESULTS_KEY)
-        return {
-          networkId,
-          ok: read?.success ?? null,
-          code: read !== null && !read.success ? read.error.code : null,
-          chars: read?.success === true ? JSON.stringify(read.data.value).length : 0,
-          readsBackAs:
-            read?.success === true
-              ? fromStoredResults(networkId, read.data.value).length
-              : 0,
-        }
-      }),
-    }
-  }
-  trace('window.__mcodeAppData() is available for a state dump')
 }
 
 // EXPORTING RESULTS WITH THE NETWORK
