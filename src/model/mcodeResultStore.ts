@@ -50,6 +50,15 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+/**
+ * Subscribe to every store change from outside React. Used by `mcodeAppData`
+ * to write the results through the host's per-app storage — persistence is a
+ * subscriber, not a call in each mutator, so a new mutator is covered for free.
+ */
+export function subscribeMcodeResults(listener: () => void): () => void {
+  return subscribe(listener)
+}
+
 function setState(partial: Partial<McodeResultsState>): void {
   state = { ...state, ...partial }
   emitChange()
@@ -70,6 +79,22 @@ export function takeNextResultId(): number {
   return nextResultId++
 }
 
+/**
+ * The counter's current value, for persisting it across reloads. Result ids
+ * name node-table columns ("MCODE::Score (3)"), so a reloaded session must not
+ * hand out an id whose columns are still on a network — see `mcodeAppData`.
+ */
+export function getNextResultId(): number {
+  return nextResultId
+}
+
+/** Restore the counter (never lowers it). */
+export function setNextResultId(value: number): void {
+  if (Number.isInteger(value) && value > nextResultId) {
+    nextResultId = value
+  }
+}
+
 /** Append a new result and make it (with no cluster) the current selection. */
 export function addResult(result: MCODEResult): void {
   setState({
@@ -77,6 +102,46 @@ export function addResult(result: MCODEResult): void {
     selectedResult: result,
     selectedCluster: null,
   })
+}
+
+/**
+ * Replace one network's results with the ones read back from storage, leaving
+ * every other network's results alone. The list stays ordered by result id, so
+ * restored results sit where they were created.
+ *
+ * The selection is kept only if the selected result object is still in the
+ * list; the panel then points it at the current network (`syncSelectionToNetwork`).
+ */
+export function restoreNetworkResults(
+  networkId: string,
+  restored: readonly MCODEResult[],
+): void {
+  const others = state.results.filter((r) => r.networkId !== networkId)
+  const results = [...others, ...restored].sort((a, b) => a.id - b.id)
+
+  // Ids are unique per session AND across reloads: a restored result's columns
+  // are still on the network, so the counter must clear every id it sees.
+  for (const result of restored) setNextResultId(result.id + 1)
+
+  const keep =
+    state.selectedResult !== null && results.includes(state.selectedResult)
+  setState({
+    results,
+    selectedResult: keep ? state.selectedResult : null,
+    selectedCluster: keep ? state.selectedCluster : null,
+  })
+}
+
+/**
+ * Move the selection onto `networkId`'s newest result, unless it already holds
+ * one of that network's. This is what makes the panel follow a network switch:
+ * the store keeps every network's results, and the panel shows the current
+ * network's.
+ */
+export function syncSelectionToNetwork(networkId: string): void {
+  if (state.selectedResult?.networkId === networkId) return
+  const forNetwork = state.results.filter((r) => r.networkId === networkId)
+  selectResult(forNetwork.length > 0 ? forNetwork[forNetwork.length - 1] : null)
 }
 
 /** Switch the selected result; clears the cluster selection. */

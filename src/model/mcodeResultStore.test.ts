@@ -18,8 +18,10 @@ import {
   getMcodeResults,
   networkEdgesCache,
   removeResultsForNetwork,
+  restoreNetworkResults,
   selectCluster,
   selectResult,
+  syncSelectionToNetwork,
   takeNextResultId,
 } from './mcodeResultStore'
 import { MCODECluster, MCODEResult } from './mcodeTypes'
@@ -163,5 +165,77 @@ test('removeResultsForNetwork keeps an unrelated selection', () => {
   const state = getMcodeResults()
   assert.deepEqual(state.results, [a])
   assert.equal(state.selectedResult, a)
+  assert.equal(state.selectedCluster, cluster)
+})
+
+test('restoreNetworkResults replaces one network and leaves the others', () => {
+  reset()
+  const a = makeResult(takeNextResultId(), 'netA')
+  const b = makeResult(takeNextResultId(), 'netB')
+  addResult(a)
+  addResult(b)
+
+  // netA's results come back from storage as new objects (a reload would make
+  // them); netB's in-memory results must be untouched.
+  const restored = makeResult(a.id, 'netA')
+  restoreNetworkResults('netA', [restored])
+
+  const state = getMcodeResults()
+  assert.deepEqual(state.results, [restored, b])
+  assert.equal(state.selectedResult, b) // b was selected and survived
+})
+
+test('restoreNetworkResults clears a selection it replaced', () => {
+  reset()
+  const a = makeResult(takeNextResultId(), 'netA')
+  addResult(a)
+  selectCluster(makeCluster(1))
+
+  restoreNetworkResults('netA', [makeResult(a.id, 'netA')])
+
+  const state = getMcodeResults()
+  assert.equal(state.selectedResult, null)
+  assert.equal(state.selectedCluster, null)
+})
+
+test('restoreNetworkResults keeps the id counter above every restored id', () => {
+  reset()
+  // A reload starts the counter at 1; restoring result 7 must not hand out an
+  // id whose MCODE node columns are still on the network.
+  restoreNetworkResults('netA', [makeResult(7, 'netA')])
+  assert.equal(takeNextResultId(), 8)
+})
+
+test('syncSelectionToNetwork selects the newest result for that network', () => {
+  reset()
+  const a1 = makeResult(takeNextResultId(), 'netA')
+  const a2 = makeResult(takeNextResultId(), 'netA')
+  const b = makeResult(takeNextResultId(), 'netB')
+  addResult(a1)
+  addResult(a2)
+  addResult(b)
+
+  syncSelectionToNetwork('netA')
+  assert.equal(getMcodeResults().selectedResult, a2)
+
+  // Nothing stored for netC: the panel shows no result rather than netA's.
+  syncSelectionToNetwork('netC')
+  assert.equal(getMcodeResults().selectedResult, null)
+})
+
+test('syncSelectionToNetwork keeps a selection already on that network', () => {
+  reset()
+  const a1 = makeResult(takeNextResultId(), 'netA')
+  const a2 = makeResult(takeNextResultId(), 'netA')
+  addResult(a1)
+  addResult(a2)
+
+  selectResult(a1)
+  const cluster = makeCluster(1)
+  selectCluster(cluster)
+  syncSelectionToNetwork('netA')
+
+  const state = getMcodeResults()
+  assert.equal(state.selectedResult, a1)
   assert.equal(state.selectedCluster, cluster)
 })
