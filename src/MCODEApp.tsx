@@ -21,6 +21,8 @@ import { lazy } from 'react'
 import { AppContext, CyAppWithLifecycle } from 'cyweb/ApiTypes'
 import { description, displayName, id, version } from 'virtual:cyweb-app-meta'
 
+import { setAppDataApi } from './model/mcodeAppData'
+
 export const MCODEApp: CyAppWithLifecycle = {
   id, // the Module Federation container name, from `cyweb.id` in package.json
   name: displayName,
@@ -45,6 +47,14 @@ export const MCODEApp: CyAppWithLifecycle = {
   // Use it for context menus (handlers need api access) and event listeners.
 
   mount(context: AppContext): void {
+    // Per-app storage for the MCODE results, keyed by network id. Handed to a
+    // module-level holder because the store subscription that writes them runs
+    // outside React; a component can use `useAppDataApi()` instead.
+    //
+    // `appData` entries are NOT cleaned up when the app is disabled — they are
+    // results the user paid compute for. See src/model/mcodeAppData.ts.
+    setAppDataApi(context.apis.appData)
+
     // Context menu items are registered here because their handlers need
     // access to context.apis. The host auto-cleans all items when the app
     // is disabled — no explicit removal in unmount() needed.
@@ -55,6 +65,10 @@ export const MCODEApp: CyAppWithLifecycle = {
   },
 
   unmount(): void {
+    // Stop persisting. The stored entries stay — a disabled app's results are
+    // still there when it is re-enabled.
+    setAppDataApi(null)
+
     // Only manual cleanup (e.g. event listeners) goes here.
     // Context menu items and resources are auto-cleaned by the host.
     //

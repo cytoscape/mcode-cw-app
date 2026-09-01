@@ -51,6 +51,7 @@ import { useWorkspaceApi } from 'cyweb/WorkspaceApi'
 import { JSX } from 'react/jsx-runtime'
 
 import { MCODEAlgorithm } from '../model/mcodeAlgorithm'
+import { forgetNetwork, hydrateNetworkResults } from '../model/mcodeAppData'
 import { buildMcodeNodeTableData, mcodeColumnNames } from '../model/mcodeExport'
 import {
   addResult,
@@ -61,6 +62,7 @@ import {
   removeResultsForNetwork,
   selectCluster,
   selectResult,
+  syncSelectionToNetwork,
   takeNextResultId,
   useMcodeResults,
 } from '../model/mcodeResultStore'
@@ -741,15 +743,23 @@ const MCODEPanel = (): JSX.Element => {
     const cached = networkEdgesCache.get(networkId)
     if (cached) return cached
 
-    const result: NetworkEdge[] = []
-
     const edgesResult = elementApi.getEdges(networkId)
-
-    if (edgesResult.success) {
-      for (const edge of edgesResult.data.edges) {
-        result.push({ id: edge.id, source: edge.sourceId, target: edge.targetId })
-      }
+    if (!edgesResult.success) {
+      // A restored result can select a network whose data is still loading.
+      // Caching the empty read would leave every thumbnail blank for the rest
+      // of the session, so return uncached and let the next render retry.
+      console.warn(
+        `Failed to read edges for network ${networkId}:`,
+        edgesResult.error.message,
+      )
+      return []
     }
+
+    const result: NetworkEdge[] = edgesResult.data.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.sourceId,
+      target: edge.targetId,
+    }))
     networkEdgesCache.set(networkId, result)
 
     return result
@@ -770,7 +780,34 @@ const MCODEPanel = (): JSX.Element => {
     console.debug(`Network deleted: ${networkId}`)
     // Delete all MCODE results that have the same networkId, and clear the selected result if it's among them.
     removeResultsForNetwork(networkId)
+    // The host already dropped the network's stored app data; forget the
+    // bookkeeping so a re-imported network with the same id reads fresh.
+    forgetNetwork(networkId)
   })
+
+  // Results follow the current network. Two reads, not one:
+  //
+  //   1. At mount, for the network that is already current — no
+  //      `network:switched` fires for that one.
+  //   2. On every switch, because the host keeps this panel mounted (it is
+  //      keyed by resource id, not by network), so React never re-runs the
+  //      mount read for us.
+  //
+  // hydrateNetworkResults pulls the network's stored results in on first
+  // sight; syncSelectionToNetwork then points the selection at them, which is
+  // what stops another network's clusters from staying on screen.
+  useEffect(() => {
+    if (!currentNetworkId) return
+    // try/catch: a storage or decode failure must not take the panel down with
+    // it. The host's PluginErrorBoundary would otherwise replace the whole
+    // panel with "Plugin unavailable", which also hides the cause.
+    try {
+      hydrateNetworkResults(currentNetworkId)
+      syncSelectionToNetwork(currentNetworkId)
+    } catch (e) {
+      console.error('Failed to restore stored MCODE results:', e)
+    }
+  }, [currentNetworkId])
 
   const handleNewAnalysisClick = (): void => {
     setAnalysisDialogOpen(true)
