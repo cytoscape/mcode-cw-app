@@ -24,6 +24,10 @@ via `virtual:cyweb-app-meta`, and the dev install manifest).
 
 ## Quick start
 
+Node 24 is enforced, not just recommended: `.nvmrc` pins it for `nvm use`,
+`.npmrc` sets `engine-strict` so `npm install` refuses an older Node, and
+`vite.config.ts` fails any build or dev run below 24.
+
 ```bash
 # 1. Install dependencies (Node >= 24)
 npm install
@@ -56,10 +60,28 @@ federation boundary — reload the host page to pick them up.
 
 ```bash
 npm run build       # production build into dist/
+npm run build:zip   # production build + App Store archive (see below)
 npm run verify      # cyweb-app verify — asserts the federation shape of dist/
 npm run typecheck   # tsc over app sources and vite.config.ts
 npm test            # MCODE algorithm unit tests (Node test runner)
 ```
+
+## Package for the App Store
+
+```bash
+npm run build:zip
+```
+
+writes `mcode-<version>.zip` next to `package.json` — the file the Cytoscape
+App Store submission page takes. The archive contains the browser publish set
+plus a generated `cy-manifest.json` (derived from this `package.json`; never
+edit or commit one), and the build is verified with the same checks as
+`npm run verify` before it is packaged. A plain `npm run build` does not
+write the zip.
+
+Prefer building the release zip in CI: a workstation build embeds absolute
+build-machine paths in `remoteEntry.js` (harmless dead literals, but they
+disclose your username and directory layout).
 
 ---
 
