@@ -8,9 +8,9 @@
   "license": "LGPL 2.1",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cytoscape/mcode-cw-app.git"
+    "url": "git+https://github.com/cytoscape/mcode-cw.git"
   },
-  "homepage": "https://github.com/cytoscape/mcode-cw-app#readme",
+  "homepage": "https://github.com/cytoscape/mcode-cw#readme",
   "keywords": [
     "clustering",
     "graph analysis"
